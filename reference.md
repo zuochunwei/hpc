@@ -9,9 +9,19 @@
 - [CPU缓存一致性](https://mp.weixin.qq.com/s/PDUqwAIaUxNkbjvRfovaCg)
 - [高性能十大核心技术](https://mp.weixin.qq.com/s/vl3Pk-QfVzjhZgEd6VTC4w)
 - [十条命令分析linux性能](https://mp.weixin.qq.com/s/jdnQN9tLkm6Mf3KqryIKmQ)
+
+* [CPUMEMORY](https://akkadia.org/drepper/cpumemory.pdf)
+* [CPP CONCURRENCY](https://paul.pub/cpp-concurrency/)
+
+
+
+工具类
+
 - [QUICK BENCHMARK](https://quick-bench.com/q/xNcDmD0N88EYUZlYSCfkL53f0Zg)
+
 - [GODBLOT](https://rust.godbolt.org/)
-- [CPP CONCURRENCY](https://paul.pub/cpp-concurrency/)
+
+  
 
 非技术相关
 - [金字塔原理](https://mp.weixin.qq.com/s/h8pmJVmhGE7xDfRvAnZcUQ)
