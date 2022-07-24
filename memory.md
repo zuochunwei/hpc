@@ -45,10 +45,10 @@
 - C++ operator new/delete重载
 - C wrap malloc/free
 - 地址消毒器
-- valgrind/cachegrind
+- valgrind/cachegrind/asan
 
 ## 其他
-- NUMA
+
 - mmap
 - Shared Memory
 - 内存对齐及影响：posix\_memalign 
