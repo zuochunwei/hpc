@@ -106,9 +106,8 @@ dlmalloc是一个高品质的佳作，它的实现只有一个源文件，虽然
 
 - 我们先看一看动态内存分配器的主要目标
     - 高吞吐：动态内存分配器要有高的吞吐，吞吐被定义为一秒钟能满足内存分配的请求次数
-    - 低延迟：从提出内存申请，到返回结果的时间间隔
-	- 高有效内存使用率
-	- 低时延
+    - 低延迟：从提出内存申请，到返回结果的时间间隔，越短越好
+	- 高有效内存使用率：overhead小
 
 ### 内存碎片：内碎片 / 外碎片
 
@@ -117,11 +116,97 @@ dlmalloc是一个高品质的佳作，它的实现只有一个源文件，虽然
 - 动态内存分配器的挑战（引出为什么需要MemPool）
 
 ## 内存池
-- 为什么内存池更快？(因为放弃了中间free，本质上是以空间换时间)
+既然系统已经有了动态内存分配器，为什么还需要内存池呢？
+### 为什么内存池更快？
+(因为放弃了中间free，本质上是以空间换时间)
+
+
 - 批发转零售的策略
 - 经典内存池的实现案例
+
+## doris是如何做内存管理的？
+Apache Doris是一个基于MPP架构的高性能、实时的分析型数据库，我们分析一下它的内存管理方案。
+
+**doris的内存管理方案分三层：**
+- 系统分配器（SystemAllocator）：封装系统/标准接口，提供统一的allocate/free接口
+    - allocate(size)根据size调用posix_memalign()或者mmap()分配内存，会在分配的时候做内存对齐
+    - free()接口调用munmap()或者free()释放内存
+    - mmap()/munmap()配对，posix_memalign()/free()配对，通过配置二选一
+- 块分配器（ChunkAllocator）
+    - 块（Chunk）：Chunk表示通过SystemAllocator::allocate接口分配的内存块，Chunk包含内存块首地址、尺寸、core_id等信息
+    - 为每个CPU core维护一个chunk_arena，chunk_arena类似ptmalloc里arena的概念，不同的是ptmalloc中的arena对应到线程，每个线程一个arena
+    - 每个chunk_arena包含一个chunk_list的数组
+    - chunk_list为每个size维护一个该size的chunk集合，为了减少各种size的数量，只维护固定size的chunk集合，比如8、16、32、64、128、256...，所以如果分配请求的大小是34字节，那么会向上圆整到64字节，通过size求对数就得到该size的块所属chunk_list（在chunk_list数组中的下标）
+    - 块分配器会使用上述的系统配置器分配/回收内存，块配置器是单件（唯一实例），分配Chunk的接口是线程安全的
+- 内存池（MemPool）
+    - 提供allocate()、clear()、free_all()等操作接口
+    - 维护通过allocate接口分配的ChunkInfo的列表，ChunkInfo在Chunk上增加了一个已分配字节数
+    - 内存池会通过块分配器分配大块，每次分配的大块的大小会按X2（策略决定）增加，从而确保不会频繁调用块分配器的allocate接口
+    - 通过内存池的allocate接口分配的内存，不支持单块free，不支持中途free，只支持统一释放free_all()
+    - 内存复用：clear()接口会重置ChunkInfo上Chunk的已分配字节数，clear并不会真正回收内存
+    - 内存池的操作接口是非线程安全的
+---
+### SystemAllocator
+屏蔽了动态内存管理相关的底层系统调用和标准C/Posix编程接口，上层应用不再直接调用底层接口，而是调用SystemAllocator封装的编程接口：allocate/free。
+
+- ChunkAllocator是怎么工作的？
+    - ChunkAllocator处于3层结构的中间层
+    - ChunkAllocator在SystemAllocator之上，会使用SystemAllocator的allocate/free接口申请和释放内存块
+    - ChunkAllocator在MemPool之下，提供allocate和free接口供MemPool使用
+    - ChunkAllocator减少了多线程竞争，ChunkAllocator维护core_num个ChunkArena对象，ChunkArena内维护一个chunk_list数组，为size=2^n的固定size块维护一个free list，内存申请的时候，会对请求的size向上圆整
+
+---
+- 因为每个core都有一个ChunkArena对象，所以上层应用代码申请内存的时候，先获取当前线程正在哪个核上运行，从而找到对应的ChunkArena对象，再通过size找到对应的free list，再从该free list上摘除一个块，返回给提出内存申请的上层。
+
+- 多个逻辑线程依然可能调度到同一个核上执行，虽然多个线程不会在一个核上同时执行申请动态内存，但多个线程在一个核上交错执行（申请内存）的情况，依然会引发对free list的数据竞争（虽然这种情况出现的概率很小），这时候只需要用test_and_swap原子操作不停尝试就行了，如果尝试一定次数还不成功，则执行线程主动yield，让出CPU，从而让另一个在该核上执行内存分配的线程有机会继续执行，进而修改atomic_flag，然后之前yield CPU的线程被重新调度执行。
+
+- TAS（test and swap）是很快的，且冲突概率变得非常小（因为每个核都有一个atomic_flag，不会所有线程竞争一个锁），这样的免锁设计，让分配内存变得很高效。
+
+- ChunkAllocator也做了一层cache，通过ChunkAllocator::free释放的内存块，并不一定会真正调用底层的free，只在预留size超过配额（2G）的情况下，才会调用SystemAllocator的free()，这样进一步减少了对系统底层动态内存管理相关API的调用频次。
+
+ChunkAllocator是单件，唯一实例，被所有MemPool对象共享。
+
+---
+### MemPool
+
+- 咱们进一部分分析MemPool的设计，先给一张MemPool的图：
+
+首先，我们来看MemPool的作用：
+
+- 内存池在SystemAllocator/ChunkAllocator/MemPool的层次结构中，位于顶层，它依赖于下层ChunkAllocator，间接依赖SystemAllocator，下层的类不反向依赖于MemPool。
+
+- 先说Chunk和ChunkInfo。
+
+    - Chunk就是底层接口单次分配的内存块，Chunk持有内存块首地址data，内存块大小size，以及分配的时候执行线程在哪个core上执行。
+
+    - ChunkInfo包含Chunk，同时多了一个int allocated_size，这是因为，为了减少对SystemAllocator::allocate()的调用次数，所以单次分配的chunk会比较大，几K，几十K，甚至XX M（兆），这个大的size记录在chunk->size上，但是，上层应用一次分配的内存可能比较小，几十字节之类，所以，该chunk还有多少字节可用（已经使用了多少字节），需要有一个记录，这就是allocated_size，相当于一个游标，每次从该chunk分配x字节，那就把allocated_size这个游标往增长的方向移动x字节（实际上会考虑到对齐）。
+
+
+- 所以，对SystemAllocator::allocate()的调用，相当于批发进货；对MemPool::allocate()的调用，相当于零售。效果上，就是减少了底层API的调用频率，减少了多线程竞争。
+
+- MemPool持有一个next_chunk_size，它表示下次调用ChunkAllocator分配接口allocator的时候，需要分配多大，它被初始化为4K，下次分配的时候，会增加到8K，当然如果下次申请的size大于8K，则会取max。
+
+- next_chunk_size会一直增加，直到触达最大配置值，这样的设计，目的还是为了减少底层分配次数。
+
+- 每次ChunkAllocator::allocate()都会返回一个Chunk，进而包装为ChunkInfo，被MemPool管理起来，所以MemPool会有多个ChunkInfo，用chunk_index标识chunk。
+
+- MemPool记录一个current_chunk_idx，这个idx记录了上次成功分配的ChunkInfo，下次分配的时候，先从current_chunk_idx指向的chunkInfo里尝试分配，如果该ChunkInfo的剩余内存空间不够，则会查找其他ChunkInfo，直到找到能满足分配请求的ChunkInfo，如果现有的所有ChunkInfo都不满足，那就走ChunkAllocator的allocate，并把新申请的Chunk，放入ChunkInfo list。
+
+- MemPool不支持单次分配的内存free，但是支持free_all，这会free该MemPool的所有Chunk。
+
+- MemPool::Clear()接口不会真正free Chunk，而是会重置allocated_size，复用原内存chunk。
+
+- 一个细节，关于ChunkAllocator，分配的时候，会首先从线程运行的core上的ChunkArena分配，如果没有合适的，会从其他Core的ChunkArena里分配，再分配不到，才会从system_allocate，这样做的目的，是减少内存cache量。
+
+我们做内存池有几个目标：
+
+- 吞吐，吞吐越大越好，能满足各种不同size，各种内存分配场景的大吞吐最好。
+- 提高存储空间利用率，千方百计减少碎片（内碎片+外碎片）。
+
+为了提高速度，我们经常要做cache，但是cache多了，会造成宝贵的内存资源的浪费，所以，需要balance。
+
+---
 	- Nginx内存池
-	- doris内存池
 	- loki小对象分配器
 - 延伸：对象池
 
