@@ -6,15 +6,90 @@
 - 内存管理和优化对性能影响很大，是编写高性能程序的关键，但内存管理和优化牵扯很多系统底层知识，本章将梳理相关内容，从软硬件结合出发，力求简明扼要讲清楚这个主题的内容，如需更深入的理解，则需扩展阅读。
 
 ## CACHE
-- 为什么需要CACHE？局部性原理
-- 三级CACHE结构，L1-L2 CPU内core共享，L3 CPU独立
-- 内存和CACHE的关系
+Cache并非一开始就有，在286时代，没有Cache，CPU和内存都很慢，CPU直接访问内存，但随着CPU技术的发展，CPU越来越快，时钟频率能够达到数G，一个简单操作能在一个时钟周期内（0.x纳秒）完成，而内存的访问时延达到50-100纳秒，两者之间有巨大的速度差距，因而内存访问速度成为制约系统性能的瓶颈。
+
+Cache介于CPU与内存之间，Cache是存储子系统的一个部件，存放着程序经常/最近访问的指令和数据，Cache的出现填充了CPU和内存之间的速度鸿沟，掩盖了CPU对内存的访问延时，访问cache的速度比访问内存快，但cache容量有限，单位成本相比内存更高，cache不是为了替代内存，而是被设计用来作为内存的高速缓存。
+
+根据局部性原理，当前被访问数据的临近数据有可能在接下来的时间里被访问，当前访问的数据很可能在接下来的时间里被再次访问，所以，虽然cache不足以装下整个内存数据，得益于程序的局部性行为，CPU对内存的访问很多会命中cache，更快的获得数据，从而获得性能的提升。
+
+广义上，用于虚拟地址转换的TLB（缓存MMU常用页表项）、MOB（Memory Ordering Buffers)、指令流水线中的ROB、甚至寄存器文件也是一种cache，但狭义上的cache主要指L1/L2/L3 Cache。
+
+cache对应用程序员是透明的，应用程序员无须关心数据是在内存还是cache中，无须关心CPU如何处理cache一致性，系统底层全权负责处理好这些细节，cache悄无声息的工作着，但理解cache及其工作原理，编写对Cache友好的程序，对性能敏感的软件（例如数据库内核/人工智能引擎）非常必要。
+
+- 为什么需要CACHE比内存快
+因为内存的物理介质是DRAM（Dynamic RAM），而CACHE的物理介质是SRAM（Static RAM），SRAM的传输速度高、延迟低、密度低、成本高。
+L1-L2 CACHE每个核心一个，直接做到了CPU Core里，跟Core的物理距离短，也是Cache快的原因之一。
+L1指令Cache（ICache）通常是放在CPU核心的指令预取单远附近的，L1数据Cache（DCache）通常是放在CPU核心的load/store单元附近。
+
+- 三级CACHE结构：L1-L2 CPU内core独占，L3 CPU内Core共享
+    - 386时代，首次出现Cache，也就是L1-Cache的雏形，而当时的cache内容更新都会直接写回内存，即Write-Through策略。
+    - 486时代，Intel在CPU里加入了8KB的L1-Cache（内部cache），该cache叫unified-cache，不区分代码和数据，且增加了Write-Back策略，即Cache内容更新不立即写回内存。
+    - 586时代，L1-Cache被一分为二，分为指令cache和数据cache。
+    - 后来，随着多CPU多Core技术的出现和发展，L3-Cache也被加入了Cache层级。
+    - L1/L2被设计为每个Core独占，L2也叫Middle Level Cache，L3被设计为核间共享，是跨CPU Core的，也被称为Last-Level-Cache。
+    - 现代计算机系统中，L1 Cache一般几十k，L2 Cache几百K，而L3 Cache容量高达数兆。
+
 - cache对性能的影响
 	- 访问延迟对比
+        - 寄存器/MBO：1 cycle， < 1ns（纳秒）
+        - L1 cache：3 cycle，~= 1ns
+        - L2 cache：12 cycle，~= 3ns
+        - L3 cache: 40 cycle, ~= 12ns
+        - DRAM（内存）：100 cycle，~=50ns
+    可见，寄存器和MBO最快，L1的时延跟CPU Core在一个数量级，内存的访问时延跟L1差了接近2个数量级。
 	- CacheLine
-	- Cache miss / Cache hit，颠簸
+        - Cache以固定大小为单位（Cache Entry）存储数据，这个单位叫Cache Line，一般是64字节
+        - CPU和Cache之间按字长（Word）为单位传输数据，64位系统上字长是64位，32位系统上字长是32位
+        - Cache和内存之间是按Cache Line为单位传输数据
+        - 内存跟磁盘间传输数据是按IO Block为单位，一般是4096字节
+        - 数据按Cache Line对齐对程序性能有好处，假设CACHE从内存里取一个Cache Line，但只访问其中的4个字节，然后因为cache容量空间有限，随后对新Cache Line的加载，导致旧的Cache Line从Cache中驱逐，这样的话，实际上只读取其中的4字节，却需要加载整个Cache Line，从而导致内存带宽的浪费，这是需要努力避免的。
+        - 考虑另一种情况，如果一个8字节的数据，被放置在2个相邻的Cache Line，则对该数据的访问，讲导致2条Cache Line被加载。
+	- Cache替换   
+        - Cache中存放的是内存数据的一个拷贝，Cache容量相比内存小很多，当数据装满之后，如果需要存入新数据，就需要淘汰旧的数据条目，给新条目腾出空间，这个过程叫Cache驱逐。
+        - 缓存管理单元通过一定的算法决定哪些数据留在Cache里，哪些数据被淘汰，这个策略叫替换策略，最简单的替换策略是LRU（Least Recently Used），实际使用的策略一直在不断演进。
+    - Cache hit/miss
+        - 因为Cache的引入，CPU需要读取一个地址的时候，会先去Cache中查找，如果需要访问的数据在Cache中，叫Cache命中（cache hit）
+        - 如果数据不在Cache中，称为Cache命失（cache miss），这时候，就需要从内存中把这个地址所在的那个Cache line上的数据加载到Cache中，然后再把数返回给CPU。
+        - 针对写操作，有两种写入策略：write back和write through。
+            - write through策略：数据直接同时被写入到Memory中。
+            - write back策略：数据仅写到Cache中，此时Cache中的数据与Memory中的数据不一致，Cache中的数据就变成了脏数据(dirty)。
+            - 如果其他部件（DMA， 另一个核）访问这段数据的时候，就需要通过Cache一致性协议(Cache coherency protocol)保证取到的是最新的数据。
+            - Cache替换的时候，Cache Line被驱逐替的时候需要写回到内存中。
+    - Cache Miss与CPU Stall
+        - 一旦Cache miss发生，就需要从内存取数，因为内存的访问时延多达几十纳秒，这个时间足够CPU执行几十上百条指令，这个时候如果CPU什么也不做干等着的话，就浪费了宝贵的计算资源。
+        - CPU Stall：CPU执行的时候，所需的数据不在寄存器和CACHE中，而需要去内存加载，加载过程中造成CPU停顿（无事可做）的现象叫CPU Stall。
+        - CPU Stall主要由数据依赖、资源竞争造成，前述的访存停顿属于典型的CPU Stall，也叫Memory Stall，另外，由于执行资源的不可用，比如功能单元、指令buffer、寄存器竞争也会导致CPU Stall。
+        - 有多种优化CPU使用效率的技术被广泛采用：
+            - 乱序执行（out of order execution）指当前执行流中不依赖当前指令执行结果的后续指令被提前执行的情况。如果指令X执行时停顿了，指令X之后的指令Y的输入，如果不依赖于指令X的执行结果，那么指令Y可能先于指令X被执行，分发/执行单元负责识别出这样依赖，并调度指令执行。
+            - 分支预测：算法预测分支结果，并取合适的指令提前执行，如果预测成功，则继续执行，如果预测失败，则重刷指令流水线，retire单元会删除错误结果，错误的预测会引起额外计算开销并增加停顿时间。
+            - 超线程技术，即把另一个线程的指令拿过来执行。
+- Load/Store
+    - CPU从内存中读取数据到cache line的操作被称为"load"
+    - cache line中的数据写回到内存对应位置的操作则被称为"store"
+    - CPU通过总线与内存相连，所以Load和Store都需要经过总线，总线被多个CPU所共享
+
+- Cache一致性
+    - 单核系统的Cache一致性指主存（内存）与Cache之间的数据一致性问题。
+
+    - 随着多CPU多Core已经成为主流硬件，而每个Core有独立的L1-L2级Cache，所以，一个数据行，有可能被同时加载到多个core的Cache中，如果是多个core上并行/并发执行的执行流，只是读内存数据，倒没什么问题，如果其中一个core上执行的线程，对数据进行修改，则这个修改将需要反应到内存上，并将这个信息同步给其他Core上的缓存，不然，就会引起不一致问题，这就是多核系统的Cache一致性问题。
+
+    - 多核把一个内存数据加载到各自的Cache，然后其中一个核修改了该数据，其他核的cacheline的对应数据将被更新为新的值，这个机制叫写传播（Write Propagation），最常见的实现方式就是总线嗅探（Bus Snooping）。
+
+    - 某个CPU核心里对数据的操作顺序，必须在其他核心看起来顺序是一样的，这个称为事务的串形化（Transaction Serialization），有一个协议（MESI）基于总线嗅探机制实现了事务串行化。
+    
+    - MESI就是CPU上采用的缓存一致性协议，它将CPU中每个缓存行标记为M(Modified)、E(Exclusive)、S(Shared)、I(Invalid)四种状态之一。
+
+    - 对应程序员而言，重要的需要理解的一点就是，如果某个core上的线程修改了某个内存数据，则需要通过总线发送消息，通知其他核心，其他核心监听到这个消息，从而把对应的CacheLine标注为无效，以反应该内存数据已经被其他核心修改的事实，从而再次从内存中加载数据到缓存。
+    
+    - 如果一个Cache Line中的2个数据，分别被不同核心修改，则会导致频繁的核间消息传递，这就是伪共享导致的性能低下问题，可以通过在2个数据之间插入无效数据，让这2部分数据，分布到不同的cache line，从而避免频繁的缓存失效/更新。
+    
+    - NUMA系统中，不同node的CPU之间不再是通过共享的总线相连，而是通过基于消息传递(message‐passing)的interconnect相连。
+
 - 分析和测量CACHE命中率
+
 - 编写CACHE友好代码
+
+- linux命令：lscpu可以查看机器的L1-2-3级缓存信息
 
 ## 虚拟存储
 为什么一个进程所需的存储空间大小能超过物理内存的大小？操作系统是如何管理机器上运行的多个进程的内存的？进程间共享存储是如何做到的？通过top命令查看的VIRT和RES指标有什么不同？所有这些问题都跟虚拟存储这个概念相关，虚拟存储是计算机系统的重要概念，可以说，理解好虚拟存储便是掌握了内存管理的钥匙。
@@ -234,7 +309,6 @@ ChunkAllocator是单件，唯一实例，被所有MemPool对象共享。
 
     - ChunkInfo包含Chunk，同时多了一个int allocated_size，这是因为，为了减少对SystemAllocator::allocate()的调用次数，所以单次分配的chunk会比较大，几K，几十K，甚至XX M（兆），这个大的size记录在chunk->size上，但是，上层应用一次分配的内存可能比较小，几十字节之类，所以，该chunk还有多少字节可用（已经使用了多少字节），需要有一个记录，这就是allocated_size，相当于一个游标，每次从该chunk分配x字节，那就把allocated_size这个游标往增长的方向移动x字节（实际上会考虑到对齐）。
 
-
 - 所以，对SystemAllocator::allocate()的调用，相当于批发进货；对MemPool::allocate()的调用，相当于零售。效果上，就是减少了底层API的调用频率，减少了多线程竞争。
 
 - MemPool持有一个next_chunk_size，它表示下次调用ChunkAllocator分配接口allocator的时候，需要分配多大，它被初始化为4K，下次分配的时候，会增加到8K，当然如果下次申请的size大于8K，则会取max。
@@ -263,15 +337,80 @@ ChunkAllocator是单件，唯一实例，被所有MemPool对象共享。
 	- loki小对象分配器
     - 延伸：对象池
 
+## 减少内存拷贝
+- CPU Offload
+    - CPU的最主要工作是计算，而不是进行数据复制
+    - DMA：DMA全称为Direct Memory Access，即直接内存访问。意思是外设对内存的读写过程可以不用CPU参与而直接进行。
+    - RDMA:RDMA（ Remote Direct Memory Access ）意为远程直接地址访问，通过RDMA，本端节点可以“直接”访问远端节点的内存。所谓直接，指的是可以像访问本地内存一样，绕过传统以太网复杂的TCP/IP网络协议栈读写远端内存，而这个过程对端是不感知的，而且这个读写过程的大部分工作是由硬件而不是软件完成的。
+
 ## 内存泄漏
-何谓内存泄漏？动态申请的内存丢失引用
+何谓内存泄漏？动态申请的内存丢失引用，造成没有办法回收它（进程退出的时候会统一回收进程资源），这便是内存泄漏。
+
+### 怎么查内存泄漏？
+
+我们可以review代码，但从海量代码里找到隐藏的问题，这如同大海捞针。
+
+所以，我们需要借助工具，比如valgrind，但这些找内存泄漏的工具，往往对你使用动态内存的方式有某种期待，或者说约束，比如常驻内存的对象会被误报出来，然后真正有用的信息会掩盖在误报的汪洋大海里。很多时候，甚至valgrind根本解决不了日常项目中的问题。
+
+所以很多著名的开源项目，为了能用valgrind跑，都费大力气，大幅修改源代码，从而使得项目符合valgrind的要求，满足这些要求，用vargrind跑完没有任何报警的项目叫valgrind干净。
+
+下面介绍一种通过wrap malloc/free定位C/C++内存泄漏的的方法：
+
+### 怎么去定位内存泄漏呢？
+malloc各种不同size的chunk，也就是每种不同size的chunk会有不同数量，如果我们能够跟踪每种size的chunk数量，那就可以知道哪种size的chunk在泄漏。
+很简单，如果该size的chunk数量一直在增长，那它很可能泄漏了。
+
+光知道某种size的chunk泄漏了还不够，我们得知道是哪个调用路径上导致该size的chunk被分配，从而去检查是不是正确释放了。
+
+### 怎么跟踪到每种size的chunk数量？
+
+我们可以维护一个全局 unsigned int malloc_map[1024 * 1024]数组，该数组的下标就是chunk的size，malloc_map[size]的值就对应到该size的chunk分配量。
+
+这等于维护了一个chunk size到chunk count的映射表，它足够快，而且它可以覆盖到0 ~ 1M大小的chunk的范围，它已经足够大了，试想一次分配一兆的块已经很恐怖了，可以覆盖到大部分场景。
+
+那大于1M的块怎么办呢？我们可以通过log记录下来。
+
+在__wrap_malloc里，++malloc_map[size]
+
+在__wrap_free里，--malloc_map[size]
+
+很简单，我们通过malloc_map记录了各size的chunk的分配量。
+
+### 如何知道释放的chunk的size？
+
+不对，free(void *p)只有一个参数，我如何知道释放的chunk的size呢？怎么办？
+
+我们通过在__wrap_malloc(size_t)的时候，分配8+size的chunk，也就是多分配8字节，开始的8字节存储该chunk的size，然后返回的是(char*)chunk + 8，也就是偏移8个字节返回给调用malloc的应用程序。
+
+这样在free的时候，传入参数void* p，我们把p往前移动8个字节，解引用就能得到该chunk的大小，而该大小值就是前一步，在__wrap_malloc的时候设置的size。
+
+好了，我们真正做到记录各size的chunk数量了，它就存在于malloc_map[1M]的数组中，假设64个字节的chunk一直在被分配，数量一直在增长，我们觉得该size的chunk很有可能泄漏，那怎么定位到是哪里调用过来的呢？
+
+### 如何记录调用链？
+
+我们可以维护一个toplist数组，该数组假设有10个元素，它保存的是chunk数最大的10种size，这个很容易做到，通过对malloc_map取top 10就行。
+
+然后我们在__wrap_malloc(size_t)里，测试该size是不是toplist之一，如果是的话，那我们通过glibc的backtrace把调用堆栈dump到log文件里去。
+
+
+注意：这里不能再分配内存，所以你只能使用backtrace，而不能使用backtrace_symbols，这样你只能得到调用堆栈的符号地址，而不是符号名。
+
+
+### 如何把符号地址转换成符号名，也就是对应到代码行呢？
+addr2line
+addr2line工具可以做到，你可以追查到调用链，进而定位到内存泄漏的问题。
+至此，你已经get到了整个核心思想。
+
+当然，实际项目中，我们做的更多，我们不仅仅记录了toplist size，还记录了各size chunk的增量toplist，会记录大块的malloc/free，会wrap更多的API。
+
+总结一下：通过wrap malloc/free + backtrace + addr2line，你就可以定位到内存泄漏了，当然，上面的方法，你还需要处理多线程的问题，不过它不是一个大问题。
+
 - C++ operator new/delete重载
 - C wrap malloc/free
 - 地址消毒器
 - valgrind/cachegrind/asan
 
 ## 其他
-
 - mmap
 - Shared Memory
 - 内存对齐及影响：posix\_memalign 
