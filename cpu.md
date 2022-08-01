@@ -55,17 +55,17 @@ void add (int * a, const int * b, int n) {
 	
 	while (i < n) { a[i] += b[i]; }
 }
+```
 
 以下代码等价于上面的实现
+
+```
 void add (int * a, const int * b, int n) {
   #pragma GCC unroll 4
 	for (int i = 0; i < n; i++)
     a[i] += b[i]; 
 }
-
 ```
-
-
 
 常用SIMD指令：SIMD的命名规则：_mm{128/256}\_{operator}\_{ps/pd/epi{xx}/si/128/si256}
 
@@ -128,9 +128,13 @@ int main()
 
 * CPU pipeline
 
-  在CPU内部采用流水线技术，一个CPU指令分为四个阶段：取址，译码，执行，写回。如果指令间没有依赖关系，则多个指令可以并行执行，而当指令间存在依赖时，流水线则会停滞。
+  **标量处理器**CPU内部一般采用标量流水线技术，即一个CPU指令一般分为五个阶段：取址(IF)，译码(ID)，执行(EX)，访存(MEM)，写回(WB)。所以一般一个CPU指令需要4～5个时钟周期(取决于是否需要访存)。如果指令间没有依赖关系，则多个指令可以并行执行，而当指令间存在依赖时，则后一个指令必须等待前一个指令执行完才可以执行。
 
-  乱序执行分为两种情况：
+  ![img](/Users/jewisliu/Public/hpc/pic/1.png)**超标量处理器**是在单个处理器内一种称为指令级并行的并行形式的CPU。与每个时钟周期最多可以执行一条指令的标量处理器相比，超标量处理器可以通过同时将多条指令分派到处理器上的不同执行单元来在一个时钟周期内执行多条指令。
+
+* Out-of-Order Execution
+
+为了最大化流水线的执行效率，CPU通过乱序执行来优化并发执行的效率。乱序执行分为两种情况：
 
 1. 在编译期，编译器进行指令重排。
 2. 在运行期，CPU 进行指令乱序执行。
@@ -139,9 +143,9 @@ int main()
 
 
 
-* branchless于branch prediction
+* branch prediction
 
-Intel的CPU的乱序执行通常会让一些指令提前执行，而分支预测则有可能打破这种秩序。如果分支预测成功，则乱序执行会提升程序的执行效率，而当分支预测失败，反而会导致CPU返回计算错误的分支。
+Intel的CPU的乱序执行通常会让一些指令提前执行，而分支预测则有可能打破这种秩序。如果分支预测成功，则乱序执行会提升程序的执行效率，而当分支预测失败，反而会导致CPU返回计算错误的分支。如果保持较高的分支预测效率，分支预测便可以提升流水线的性能。
 
 * context switch
 * lock（shared rw lock & unqiue lock） vs atomic
@@ -175,7 +179,7 @@ Intel的CPU的乱序执行通常会让一些指令提前执行，而分支预测
 
 
 
-include <immintrin.h>
+reference：
 
 http://svmoore.pbworks.com/w/file/fetch/70583970/VectorOps.pdf
 
