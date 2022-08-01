@@ -21,8 +21,8 @@
 - 其他NUMA、SharedMemory、mmap、内存对齐
 
 # 数据结构和算法
-- hash / 一致性hash
-- roaringbitmap
+- hash / 一致性hash / linear hashing
+- roaring bitmap
 - hll
 - skiplist
 - ...
