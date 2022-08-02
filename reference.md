@@ -12,6 +12,7 @@
 
 * [CPUMEMORY](https://akkadia.org/drepper/cpumemory.pdf)
 * [CPP CONCURRENCY](https://paul.pub/cpp-concurrency/)
+* [agner性能优化](https://www.agner.org/optimize/)
 
 
 

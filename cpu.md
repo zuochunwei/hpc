@@ -18,7 +18,7 @@
 
   **标量处理器**CPU内部一般采用标量流水线技术，即一个CPU指令一般分为五个阶段：取址(IF)，译码(ID)，执行(EX)，访存(MEM)，写回(WB)。所以一般一个CPU指令需要4～5个时钟周期(取决于是否需要访存)。如果指令间没有依赖关系，则多个指令可以并行执行，而当指令间存在依赖时，则后一个指令必须等待前一个指令执行完才可以执行。
 
-  ![img](/Users/jewisliu/Public/hpc/hpc/pic/1.png)**超标量处理器**是在单个处理器内一种称为指令级并行的并行形式的CPU。与每个时钟周期最多可以执行一条指令的标量处理器相比，超标量处理器可以通过同时将多条指令分派到处理器上的不同执行单元来在一个时钟周期内执行多条指令。
+  ![img](./pic/1.png)**超标量处理器**是在单个处理器内一种称为指令级并行的并行形式的CPU。与每个时钟周期最多可以执行一条指令的标量处理器相比，超标量处理器可以通过同时将多条指令分派到处理器上的不同执行单元来在一个时钟周期内执行多条指令。
 
   
 
@@ -46,7 +46,7 @@
   ```c++
   void add (int * a, const int * b, int n) {
     #pragma GCC ivdep
-  	for (int i = 0; i < n; i++)
+    for (int i = 0; i < n; i++)
       a[i] += b[i]; 
   }
   ```
@@ -54,14 +54,14 @@
   ```c++
   void add (int * a, const int * b, int n) {
     int i = 0;
-  	for (i = 0; i < n - 3; i+=4) {
-  		a[i] += b[i];
+    for (i = 0; i < n - 3; i+=4) {
+      a[i] += b[i];
       a[i+1] += b[i+1];
       a[i+2] += b[i+2];
       a[i+3] += b[i+3];
-  	}
-  	
-  	while (i < n) { a[i] += b[i]; }
+    }
+  
+    while (i++ < n) { a[i] += b[i]; }
   }
   ```
 
@@ -70,7 +70,7 @@
   ```c++
   void add (int * a, const int * b, int n) {
     #pragma GCC unroll 4
-  	for (int i = 0; i < n; i++)
+    for (int i = 0; i < n; i++)
       a[i] += b[i]; 
   }
   ```
@@ -110,7 +110,7 @@
   {
       float a[8] = { 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0 };
       float b[8] = { 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0 };
-  		float c[8];
+      float c[8];
       const __m256 __attribute__((aligned(32))) va = _mm256_setr_ps(1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0);
       const __m256 __attribute__((aligned(32))) vb = _mm256_setr_ps(1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0);
   
@@ -123,7 +123,6 @@
       {
       	std::cout << c[i] << std::endl;
       }
-  
   }
   ```
 
@@ -138,7 +137,26 @@
 
 * branch prediction
 
-  Intel的CPU的乱序执行通常会让一些指令提前执行，而分支预测则有可能打破这种秩序。如果分支预测成功，则乱序执行会提升程序的执行效率，而当分支预测失败，反而会导致CPU返回计算错误的分支。如果保持较高的分支预测效率，分支预测便可以提升流水线的性能。
+  Intel的CPU的乱序执行通常会让一些指令提前执行，而分支预测则有可能打破这种秩序。如果分支预测成功，则乱序执行会提升程序的执行效率，而当分支预测失败，则提前计算的CPU指令变为无效。如果保持较高的分支预测效率，分支预测便可以提升流水线的性能。
+
+  分支预测成功率主要是为了解决CPU流水线阻塞的问题。一般分为静态分支预测和动态分支预测的方法。
+
+  静态分支预测是软件侧的分支预测实现，更准确的说是通过编译器来达到更好的分支预测结果，减少pipeline flush。
+
+  动态分支预测主要分为两种，首先是分支结果的预测，对分支结果预测主要是为了减少pipeline stall。其次是分支跳转指令地址预测，即BTA(Branch Target Address)的预测。
+
+  
+
+  程序中通常通过__builtin_expect函数提示编译器来增加分支预测的准确性。
+
+  ```c++
+  #if !defined(likely)
+  #    define likely(x)   (__builtin_expect(!!(x), 1))
+  #endif
+  #if !defined(unlikely)
+  #    define unlikely(x) (__builtin_expect(!!(x), 0))
+  #endif
+  ```
 
   
 
@@ -161,7 +179,7 @@
 
 * cpu clock/ timer
 
-  同样，我们要对一段程序进行性能测试时，需要记录程序运行的时间，在Linux平台上有多种计时工具，常见的如clock, gettimeofday, clock_gettime, std::chrono::system_clock, std:;chrono::steady_clock, std::chrono::high_resolution_clock, rdtsc。在所有的计时工具中，std::chrono的稳定性和精度均为良好并且跨平台性最好(C++11标准)，rdtsc精度最高，速度最快，稳定性最好 。我们所有的性能测试均采用std::chronologically::high_resolution_clock的计时方式来测试性能。
+  同样，我们要对一段程序进行性能测试时，需要记录程序运行的时间，在Linux平台上有多种计时工具，常见的如clock, gettimeofday, clock_gettime, std::chrono::system_clock, std:;chrono::steady_clock, std::chrono::high_resolution_clock, rdtsc。在所有的计时工具中，std::chrono的稳定性和精度均为良好并且跨平台性最好(C++11标准)，rdtsc精度最高，速度最快，稳定性最好 。我们所有的性能测试均采用std::chrono::high_resolution_clock的计时方式来测试性能。
 
 
 
@@ -176,6 +194,10 @@
 
 
 reference：
+
+https://gcc.gnu.org/onlinedocs/gcc/Other-Builtins.html （Build_in 内置指令）
+
+https://www.ibm.com/docs/en/zos/2.4.0?topic=pragmas-individual-pragma-descriptions (Pragma优化)
 
 http://svmoore.pbworks.com/w/file/fetch/70583970/VectorOps.pdf
 
