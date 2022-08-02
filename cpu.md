@@ -47,7 +47,7 @@
   void add (int * a, const int * b, int n) {
     #pragma GCC ivdep
     for (int i = 0; i < n; i++)
-      a[i] += b[i]; 
+        a[i] += b[i];
   }
   ```
 
@@ -55,10 +55,10 @@
   void add (int * a, const int * b, int n) {
     int i = 0;
     for (i = 0; i < n - 3; i+=4) {
-      a[i] += b[i];
-      a[i+1] += b[i+1];
-      a[i+2] += b[i+2];
-      a[i+3] += b[i+3];
+        a[i] += b[i];
+        a[i+1] += b[i+1];
+        a[i+2] += b[i+2];
+        a[i+3] += b[i+3];
     }
   
     while (i++ < n) { a[i] += b[i]; }
@@ -71,7 +71,7 @@
   void add (int * a, const int * b, int n) {
     #pragma GCC unroll 4
     for (int i = 0; i < n; i++)
-      a[i] += b[i]; 
+        a[i] += b[i];
   }
   ```
 
@@ -161,7 +161,37 @@
   
 
 * memory barrier/memory fence/CPU fence
-* （乱序执行）CPU一致性storebuffer，InvalidQueue（ARM VS INTEL）
+
+  C++11  述了 6 种可以应用于原子变量的内存次序:
+
+  - momory_order_relaxed,
+  - memory_order_consume,
+  - memory_order_acquire,
+  - memory_order_release,
+  - memory_order_acq_rel,
+  - memory_order_seq_cst.
+
+  虽然共有 6 个选项,但它们表示的是三种内存模型:
+
+- * sequential consistent([memory_order_seq_cst](https://www.zhihu.com/search?q=memory_order_seq_cst&search_source=Entity&hybrid_search_source=Entity&hybrid_search_extra={"sourceType"%3A"answer"%2C"sourceId"%3A83422523})),
+
+- - relaxed(memory_order_seq_cst).
+  - acquire release(memory_order_consume, memory_order_acquire, memory_order_release, memory_order_acq_rel),
+
+
+
+* CPU缓存一致性storebuffer，InvalidQueue（ARM VS INTEL）
+
+  现代CPU中一般采用的memory hierarchy的方式，越靠近CPU的cache读写速度也越快。多核CPU之间Cache一般是不共享的，所以需要通过缓存一致性协议MESI来保持CPU之间的状态一致。
+
+  MESI包括独占(exclusive)、共享(share)、修改(modified)、失效(invalid)，用来描述该缓存行是否被多处理器共享、是否修改。
+
+  - 独占(exclusive)：仅当前处理器拥有该缓存行，并且没有修改过，是最新的值。
+  - 共享(share)：有多个处理器拥有该缓存行，每个处理器都没有修改过缓存，是最新的值。
+  - 修改(modified)：仅当前处理器拥有该缓存行，并且缓存行被修改过了，一定时间内会写回主存，会写成功状态会变为S。
+  - 失效(invalid)：缓存行被其他处理器修改过，该值不是最新的值，需要读取主存上最新的值。
+
+
 
 * context switch
 
