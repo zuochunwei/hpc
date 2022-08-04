@@ -331,7 +331,7 @@ ChunkAllocator是单件，唯一实例，被所有MemPool对象共享。
 
 ---
 
-- NGINX内存池
+#### NGINX内存池
 NGINX是高性能高并发服务器的典范，NGINX常被用来作为HTTP和反向代理Web服务器，作为HTTP服务器，NGINX的工作模式是：接收一个来自client的request，处理该request，然后向client吐出response。
 
 这样的工作模式非常适合用内存池优化动态内存分配，NGINX内存池也是NGINX优秀设计的一个典型案例。
