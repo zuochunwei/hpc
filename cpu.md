@@ -158,7 +158,42 @@
   #endif
   ```
 
-  
+* branchless
+
+  branchless 通常情况下可以提升系统的性能，尤其是在选择率较低的场景下。下面的程序用于筛选出数组中正数的元素，并输出到新的数组中。通常的写法如下：
+
+  ```c++
+  void filter_positive(const size_t *input, 
+          size_t count, size_t *output) {
+    size_t j = 0;
+    for(size_t i = 0; i < count; i++) {
+      if(input[i] >= 0) {
+        output[j++] = input[i];
+      }
+    }
+  }
+  ```
+
+  branchless的写法如下：
+
+  ```c++
+  void filter_positive(const size_t *input, 
+          size_t count, size_t *output) {
+    size_t j = 0;
+    for(size_t i = 0; i < count; i++) {
+        output[j] = input[i];
+      	j += (input[i] >= 0);
+    }
+  }
+  ```
+
+
+
+​		branchless 相比branch虽然消耗了更多的Instructions，但实际上在选择率低于50%的场景下，branchless性能更好，所需要的CPU 
+
+Cycles更少。
+
+
 
 * memory barrier/memory fence/CPU fence
 
@@ -210,6 +245,8 @@
 * cpu clock/ timer
 
   同样，我们要对一段程序进行性能测试时，需要记录程序运行的时间，在Linux平台上有多种计时工具，常见的如clock, gettimeofday, clock_gettime, std::chrono::system_clock, std:;chrono::steady_clock, std::chrono::high_resolution_clock, rdtsc。在所有的计时工具中，std::chrono的稳定性和精度均为良好并且跨平台性最好(C++11标准)，rdtsc精度最高，速度最快，稳定性最好 。我们所有的性能测试均采用std::chrono::high_resolution_clock的计时方式来测试性能。
+  
+  
 
 
 

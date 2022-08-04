@@ -13,6 +13,8 @@
 * [CPUMEMORY](https://akkadia.org/drepper/cpumemory.pdf)
 * [CPP CONCURRENCY](https://paul.pub/cpp-concurrency/)
 * [agner性能优化](https://www.agner.org/optimize/)
+* [lemire大神的博客](https://lemire.me/blog/)
+* [Gregg大神的性能优化](https://brendangregg.com/)
 
 
 
