@@ -436,6 +436,17 @@ addr2line工具可以做到，你可以追查到调用链，进而定位到内�
 
 总结一下：通过wrap malloc/free + backtrace + addr2line，你就可以定位到内存泄漏了，当然，上面的方法，你还需要处理多线程的问题，不过它不是一个大问题。
 
+### 编译器和编程语言支持
+c语言支持hook malloc、free、realloc等接口，这样你可以从比较低的层次干预和统计内存分配。
+c++支持operator new/new[]、operator delete/delete[]、以及类的operator new/delete重载。
+c++的标准库容器，比如vector、list、map等，都支持传入自定义allocator，你可以接管内存配置，而不限于默认分配器。
+COW（Copy On Write）写时拷贝是一项能节省拷贝的技术，fork出来的进程也用到了cow，如果要全量拷贝，那fork的返回会延迟很多。
+为了防止内存泄漏，有时候会借助RAII技术。
+引用计数是实现智能指针的关键技术，需要区分弱引用和强引用，以及shared和unique，所有权的概念。
+ptmalloc可以开启一些统计选项，这可以为排错提供帮助。
+libc的动态内存分配器默认是ptmalloc，你也可以用google的tcmalloc，以及jemalloc等动态内存分配器替换。
+监控和查找内存泄漏问题，你可以借助valgrind工具，不过valgrind对代码有要求，只有符合它期望的程序才能valgrind干净，不然误报会比较多。
+
 - C++ operator new/delete重载
 - C wrap malloc/free
 - 地址消毒器
