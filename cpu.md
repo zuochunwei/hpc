@@ -44,7 +44,7 @@ void add_norestrict(int * a, const int * b, const int * c) {
 }
 ```
 
-上面两个函数的差别在于a是否增加了__restrict关键字，\_\_restrict关键字表明a的内存是独占的，不会与其它变量重叠或者共享。所以load以及store指令是独立的，可以并行执行，所以编译器可以进行SIMD优化。如果重叠，则必须顺序执行。
+上面两个函数实现是简单的int数组相加。差别在于a是否增加了__restrict关键字，\_\_restrict关键字表明a的内存是独占的，不会与其它变量b,c重叠或者共享。load以及store指令是独立的，可以并行执行，所以编译器可以进行SIMD优化。如果不指定\_\_restrict,则编译器不能保证a与b,c之间不会存在重叠的部分，所以load和store指令可能会操作同一块内存，所以必须顺序执行。从汇编代码来看，就比较明显了。add_restrict函数直接使用xmm寄存器通过\_mm_add_epi32实现SIMD的优化，但add\_norestrict函数则不能优化，在汇编中rdx表示的是变量c，rsi表示变量b, rdi表示变量a，只能按顺序将rdx寄存器地址的值压入eax累加器中，然后add rsi寄存器地址的值，然后将结果保存到rdi寄存器中，一共计算4次，相比向量化的版本，未加\_\_restrict消耗的cpu instuctions要更多。
 
 ```
 add_restrict(int*, int const*, int const*):               # @add_restrict(int*, int const*, int const*)
