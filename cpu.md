@@ -30,16 +30,46 @@ SIMD(**Single instruction, multiple data**),即单指令，多数据，是费林
 
 在GCC编译器中,指定优化选项 `-O3` or `-ftree-vectorize` 即可开启自动向量化。
 
-__restrict__ 关键字告诉编译器表示变量之间的内存不存在重叠，可以进行向量化优化。
+\_\_restrict__ 关键字告诉编译器该变量的内存独占且不存在重叠，可以进行SIMD优化。
 
 ```c++
-void add(int * __restrict__ a, const int * __restrict__ b, int n) {
-    for (int i = 0; i < n; i++)
-        a[i] += b[i];
+void add_restrict(int * __restrict a, const int * b, const int * c) {
+    for (int i = 0; i < 4; i++)
+        a[i] = b[i] + c[i];
+}
+
+void add_norestrict(int * a, const int * b, const int * c) {
+    for (int i = 0; i < 4; i++)
+        a[i] = b[i] + c[i];
 }
 ```
 
-Pragma帮助编译器自动向量化，pragma GCC ivdep表示下面的循环没有依赖关系，编译器可以进行自动向量化编译。pragma GCC unroll n,表示帮助编译器循环展开。
+上面两个函数的差别在于a是否增加了__restrict关键字，\_\_restrict关键字表明a的内存是独占的，不会与其它变量重叠或者共享。所以load以及store指令是独立的，可以并行执行，所以编译器可以进行SIMD优化。如果重叠，则必须顺序执行。
+
+```
+add_restrict(int*, int const*, int const*):               # @add_restrict(int*, int const*, int const*)
+        movdqu  xmm0, xmmword ptr [rsi]
+        movdqu  xmm1, xmmword ptr [rdx]
+        paddd   xmm1, xmm0
+        movdqu  xmmword ptr [rdi], xmm1
+        ret
+add_norestrict(int*, int const*, int const*):             # @add_norestrict(int*, int const*, int const*)
+        mov     eax, dword ptr [rdx]
+        add     eax, dword ptr [rsi]
+        mov     dword ptr [rdi], eax
+        mov     eax, dword ptr [rdx + 4]
+        add     eax, dword ptr [rsi + 4]
+        mov     dword ptr [rdi + 4], eax
+        mov     eax, dword ptr [rdx + 8]
+        add     eax, dword ptr [rsi + 8]
+        mov     dword ptr [rdi + 8], eax
+        mov     eax, dword ptr [rdx + 12]
+        add     eax, dword ptr [rsi + 12]
+        mov     dword ptr [rdi + 12], eax
+        ret
+```
+
+Pragma帮助编译器自动向量化，pragma GCC ivdep表示下面的循环没有依赖关系，编译器可以进行自动向量化编译。
 
 ```c++
 void add (int * a, const int * b, int n) {
@@ -48,6 +78,8 @@ void add (int * a, const int * b, int n) {
       a[i] += b[i];
 }
 ```
+
+pragma GCC unroll n,表示帮助编译器循环展开。
 
 ```c++
 void add (int * a, const int * b, int n) {
