@@ -164,6 +164,78 @@ bool sell(int num) {
 ### 条件变量（生产者-消费者模式）
 需要配合互斥量使用，常用于生产者消费者模式
 
+假设你要编写一个网络处理程序，I/O线程从套接字接收字节流，反序列化后产生一个个消息（自定义协议），然后投递到一个消息队列，一组工作线程负责从消息队列取出并处理消息。
+
+这是典型的生产者-消费者模式，I/O线程生产消息（往队列put），Work线程消费消息（从队列get），I/O线程和Work线程并发访问消息队列，显然，消息队列是竞争资源，需要同步。
+
+我们可以给队列配置互斥锁，put和get操作都先加锁，操作完成再解锁。代码差不多是这样的：
+
+```
+void io_thread() {
+    while (1) {
+        select(max_fd, read_fds, write_fds, nullptr, ...);
+        Msg* msg = read_msg_from_socket();
+        msg_queue_mutex.lock();
+        msg_queue.put(msg);
+        msg_queue_mutex.unlock();
+    }
+}
+
+void work_thread() {
+    while (1) {
+        msg_queue_mutex.lock();
+        Msg* msg = msg_queue.get();
+        msg_queue_mutex.unlock();
+        if (msg != nullptr) {
+            process(msg);
+        }
+    }
+}
+
+```
+
+work线程组的每个线程都忙于检查消息队列是否有消息，如果有消息就取一个出来，然后处理消息，如果没有消息就在循环里不停检查，这样的话，即使负载很轻，但work_thread还是会消耗大量的CPU时间，我们当然可以在两次查询之间加入短暂的sleep，从而让出cpu，但是这个睡眠的时间设置为多少合适呢？设置长了的话，会出现消息到来得不到及时处理，设置太短了，还是无辜消耗了CPU资源，这种不断问询的方式在编程上叫轮询。
+
+轮询行为逻辑上，相当于你在等一个投递到楼下小邮局的包裹，你下楼问过没到之后，就上楼去，然后马上又下楼问，你不停的上楼下楼+询问，其实，你大可不必如此，何不等包裹到达以后，让门卫打电话通知你呢？
+
+条件变量提供了一种类似通知的机制，它让两类线程能够在一个点交汇。条件变量能够让线程等待某个条件发生，条件本身受互斥锁保护，因此条件变量必须搭配互斥锁使用，线程在改变条件前先获得锁，然后改变条件状态，再解锁，然后发出通知，等待条件的睡眠中的线程在被唤醒前，必须先获得锁，再判断条件状态，如果条件不成立，则继续转入睡眠并释放锁。
+
+对应到上面的例子，工作线程等待的条件是消息队列非空，用条件变量改写上面的代码：
+
+```
+
+void io_thread() {
+    while (1) {
+        select(max_fd, read_fds, write_fds, nullptr, ...);
+        Msg* msg = read_msg_from_socket();
+        {
+            std::lock_guard<std::mutex> lock(msg_queue_mutex);
+            msg_queue.push_back(msg);
+        }
+        msg_queue_not_empty.notify_all();
+    }
+}
+
+void work_thread() {
+    while (1) {
+        Msg* msg = nullptr;
+        {
+            std::unique_lock<std::mutex> lock(msg_queue_mutex);
+            msg_queue_not_empty.wait(lock, []{ return !msg_queue.empty(); });
+            msg = msg_queue.get();
+        }
+        process(msg);
+    }
+
+}
+
+```
+lock_guard是互斥量的一个RAII包装类，unique_lock除了会在析构函数自动解锁外，还支持主动unlock调用。
+
+生产者在往msg_queue投递消息的时候，需要对msg_queue加锁，通知work线程的代码可以放在解锁之后，等待msg_queue_not_empty条件必须受msg_queue_mutex保护，wait的第二个参数是一个lambda表达式，因为会有多个work线程被唤醒，线程被唤醒后，会重新获得锁，检查条件，如果不成立，则再次睡眠，条件变量的使用必须非常谨慎，否则容易出现不能唤醒的情况。
+
+Posix条件变量的编程接口跟C++的类似，概念上是一致的。
+
 ### 原子变量&原子操作
 C++提供一种类型为atomic<>的类模板，它提供++/--/+=/-=/fetch_sub/fetch_add等原子操作。
 
