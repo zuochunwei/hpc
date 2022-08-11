@@ -1,4 +1,16 @@
 # 线程同步
+
+```flow
+st=>start: Start
+e=>end
+op=>operation: My Operation
+cond=>condition: Yes or No?
+
+st->op->cond
+cond(yes)->e
+cond(no)->op
+```
+
 进程内的多个线程共享同一虚拟地址空间，每个线程都是一个独立的执行流，所以，多个线程对应多个执行流，多个执行流会竞争同一资源的情况，资源包括内存数据、打开的文件句柄、套接字等，如果不加以控制和协调，则有可能出现数据不一致，而这种数据不一致可能导致结果错误，甚至程序奔溃，因此，需要努力避免。
 
 并发编程的错误非常诡谲且难以定位，它总是隐藏在某个的角落，大多数时候，程序运转良好，等代码交付上线后，莫名其妙的出错，就像墨菲定律描述的那样：凡是可能出错，就一定会出错。
@@ -350,10 +362,9 @@ public:
     void push(const T& data) {
       node<T>* new_node = new node<T>(data);
       new_node->next = head.load(std::memory_order_relaxed);
-      while(!head.compare_exchange_weak(new_node->next, new_node,
+      while (!head.compare_exchange_weak(new_node->next, new_node,
                                         std::memory_order_release,
-                                        std::memory_order_relaxed))
-          ; // the body of the loop is empty
+                                        std::memory_order_relaxed));
     }
 };
 ```
