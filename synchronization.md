@@ -9,7 +9,7 @@
 ### 例子1
 有一个货物售卖程序，变量int item_num记录某商品的数量，它被初始值为100（代表可售卖数量为100）。售卖函数检查剩余商品数，如果剩余商品数大于等于售卖数量，则扣除商品件数，并返回成功；否则，返回失败。代码如下：
 
-```
+```c++
 bool sell(int num) {
     if (item_num >= num) {
         item_num -= num;
@@ -51,7 +51,7 @@ CPU核相当于工人，而程序线程相当于任务，核的数量决定了�
 ### 例子2
 全局变量int count用来计数，我们启动100个线程，每个线程的处理逻辑：在100次循环里累加count；主函数启动线程并等待所有线程执行完成，程序退出前打印count数值，代码如下:
 
-```
+```c++
 #include <thread>
 #include <iostream>
 
@@ -107,7 +107,7 @@ C/C++、Java等编程语言都有类似的线程同步机制和编程接口，�
 
 互斥锁的用法，通常是在访问共享资源前加锁，完成资源访问后再解锁，当申请加锁的时候，锁已经被其他线程持有，那么申请加锁的线程便会阻塞住，当锁被释放（解锁），则阻塞在该锁上的所有线程，都会被唤醒，只有一个线程会加锁成功，其他线程意识到锁处于加锁状态，则又转入阻塞等待解锁，因此，一次只有一个线程会前进。用mutex对sell做同步的代码如下：
 
-```
+```c++
 bool sell(int num) {
     mutex.lock();
     if (item_num >= num) {
@@ -127,7 +127,7 @@ bool sell(int num) {
 
 所以，C++提供一个叫RAII的技术，常用来应对这种情况，RAII利用C++临时对象的析构在对象出作用域时一定会得到调用的特性，来提升安全性，通过构建一个临时对象，在对象的构造函数里加锁，在析构函数里解锁，来完成配对的操作，常用于加/解锁，打开/关闭文件句柄，申请/释放资源等操作。
 
-```
+```c++
 class LockGuard {
     std::mutex& mutex;
     LockGuard(const LockGuard&) = delete;
@@ -171,7 +171,7 @@ bool sell(int num) {
 
 我们可以给队列配置互斥锁，put和get操作都先加锁，操作完成再解锁。代码差不多是这样的：
 
-```
+```c++
 void io_thread() {
     while (1) {
         select(max_fd, read_fds, write_fds, nullptr, ...);
@@ -202,7 +202,7 @@ work线程组的每个线程都忙于检查消息队列是否有消息，如果�
 
 对应到上面的例子，工作线程等待的条件是消息队列非空，用条件变量改写上面的代码：
 
-```
+```c++
 void io_thread() {
     while (1) {
         select(max_fd, read_fds, write_fds, nullptr, ...);
@@ -245,7 +245,7 @@ C++提供一种类型为std::atomic<T>的类模板，它提供++/--/+=/-=/fetch_
 
 原子操作常用于与顺序无关的场景，比如前面例子中的计数，用原子变量改写后，则会输出符合预期的count=10000。
 
-```
+```c++
 std::atomic<int> count = 0;
 
 void thread_proc() {
@@ -259,7 +259,7 @@ void thread_proc() {
 
 内存操作顺序并不唯一，例如在一个包含core0和core1的CPU中，core0和core1各有着自己的内存操作顺序，这两个内存操作顺序不一定相同，从包含多个Core的CPU的视角看到的全局内存操作顺序跟单core视角看到的内存操作顺序不同，而这种不同，对于有些程序逻辑而言，是不可接受的，所以，需要有机制确保内存序的一致。
 
-```
+```c++
 a = 1;
 b = 2;
 ```
@@ -283,19 +283,24 @@ b = 2;
 所以，只需要在a=1后、b=2前插入一条内存屏障语句，就能确保a=1先于b=2生效，从而解决了内存乱序访问问题。
 
 **系统对内存屏障的支持**
+gcc编译器在遇到内嵌汇编语句
+```c
+asm volatile("" ::: "memory");
+```
+将以此作为一条内存屏障，重排序内存操作。即此语句之前的各种编译优化将不会持续到此语句之后。
+Linux 内核提供函数 barrier()用于让编译器保证其之前的内存访问先于其之后的完成。
+```c
+#define barrier() __asm__ __volatile__("" ::: "memory")
+```
+
 CPU内存屏障
 - 通用barrier，保证读写操作有序， mb()和smp_mb()
 - 写操作barrier，仅保证写操作有序，wmb()和smp_wmb()
 - 读操作barrier，仅保证读操作有序，rmb()和smp_rmb()
 
-Linux 内核提供函数 barrier() 用于让编译器保证其之前的内存访问先于其之后的完成。
-```
-#define barrier() __asm__ __volatile__("" ::: "memory")
-```
-
 **Store Buff**
 考虑下面的代码：
-```
+```c
 x = 1;
 y = 2;
 assert(x == 1);
@@ -322,7 +327,7 @@ store buffer被引入用来遮掩store操作带来的延迟。有了Store Buffer
 
 Lock-Free主要依靠CPU提供的read-modify-write原语，著名的“比较和交换”CAS（Compare And Swap）在X86机器上是通过cmpxchg系列指令实现的原子操作，通过CAS实现Lock-free的代码通常这样写：
 
-```
+```c
 do {
     ...
 } while (!CAS(ptr, old_value, new_value));
@@ -330,7 +335,7 @@ do {
 
 下面是用atomic实现的一个免锁堆栈:
 
-```
+```c++
 template <typename T>
 struct node {
     T data;
