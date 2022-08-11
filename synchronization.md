@@ -320,11 +320,40 @@ assert(a == 1);
 
 问题出在变量a除保存在内存外，还有2份拷贝，一份在store buffer里，一份在cache里，如果不考虑这2份拷贝的关系，就会出现数据不一致。
 
-那怎么修复这个问题？core0可以通过在load操作的时候，先检查store buffer中是否有悬而未决的store新值，如果有，则取新值；否则从cache取a的副本，这种技术在多级流水线CPU设计的时候就经常使用，叫Store Forwarding。
+那怎么修复这个问题？可以通过在Core load数据的时候，先检查store buffer中是否有悬而未决的a的新值，如果有，则取新值；否则从cache取a的副本。这种技术在多级流水线CPU设计的时候就经常使用，叫Store Forwarding。
 
-有了store buffer forwarding，就能确保单核程序的执行遵从程序顺序性。
+有了store buffer forwarding，就能确保单核程序的执行遵从程序顺序性，多核还是有问题。
+
+考查下面的程序：
+```c++
+int a = 0, b = 0;
+
+void x() {
+    a = 1;
+    b = 2;
+}
+
+void y() {
+    while (b) {}
+    assert(a == 1);
+}
+```
+
+- a和b都被初始化为0
+- CPU0执行x()函数，CPU1执行y()函数
+- 变量a在CPU1的local Cache里，变量b在CPU0的local Cache里
+
+    - CPU0执行`a = 1`的时候，因为a不在CPU0的local cache，CPU0会把a的新值1写入Store Buffer里，并发送Read Invalidate消息去其他CPU获得a的值
+    - CPU1执行`while (b) {}`,因为b不在CPU1的local cache里，CPU1会发送Read Invalidate消息去其他CPU获取b的值
+    - CPU0执行`b = 2`，因为b在CPU0的local Cache，所以直接更新local cache中b的副本
+    - CPU0收到CPU1发来的Read Invalidate消息，把b的新值（1）发送给CPU1，存放b的Cache Line的状态被设置为Shared以反应b同时被CPU0和CPU1 cache住的事实
+    - CPU1收到b的新值（1）后结束循环，继续执行`assert(a == 1)`，因为此时local Cache中的a值为0，所以断言失败
+    - CPU1收到CPU0发来的Read Invalidate后，更新a的值为1，但为时已晚，上一步已经崩了
+
+怎么办？答案留到内存屏障一节揭晓。
 
 ### Invalidate Queue
+**为什么需要Invalidate Queue**
 当一个变量加载到多个core的Cache，则这个CacheLine处于Share状态，如果Core1要修改这个变量，则需要通过发送核间消息Invalidate来通知其他Core把对应的Cache Line置为Invalid，当其他Core都Invalid这个CacheLine后，则本Core获得该变量的独占权，这个时候就可以修改它了。
 
 收到Invalidate消息的core会需要回Invalidate ACK，一个个core都这样ACK，等所有core都回复完，Core1才能修改它，但这样太慢了，事实上，其他核在收到Invalidate消息后，会把Invalidate消息缓存起来，并立即回复ACK，这样一方面不会导致Core1不必要的Stall，另一方面也提供了进一步优化可能，比如在一个CacheLine里的多个变量的Invalidate可以攒一次做了。
@@ -340,7 +369,14 @@ assert(a == 1);
 
 内存屏障，其实就是提供一种机制，确保代码里写顺序写下的多行，会按照书写的顺序，被存入内存，主要是解决StoreBuffer引入导致的写入内存间隙的问题。
 
-所以，只需要在a=1后、b=2前插入一条内存屏障语句，就能确保a=1先于b=2生效，从而解决了内存乱序访问问题。
+所以，只需要像下面这样在a=1后、b=2前插入一条内存屏障语句，就能确保a=1先于b=2生效，从而解决了内存乱序访问问题。
+```c++
+void x() {
+    a = 1;
+    smp_mb();
+    b = 2;
+}
+```
 
 **系统对内存屏障的支持**
 gcc编译器在遇到内嵌汇编语句`asm volatile("" ::: "memory");`将以此作为一条内存屏障，重排序内存操作，即此语句之前的各种编译优化将不会持续到此语句之后。
@@ -427,7 +463,7 @@ Posix线程私有数据相关接口：
 我们描述了死锁发生的典型场景，这种情况叫ABBA锁，既某个线程持有A锁申请B锁，而另一个线程持有B锁申请A锁。这种情况可以通过try lock实现，尝试获取锁，如果不成功，则释放自己持有的锁，而不一根筋下去。
 
 #### 自死锁
-对于不自持重复加锁的锁，如果线程持有某个锁，而后又再次申请锁，因为该锁已经被自己持有，再次申请锁必然得不到满足，从而导致死锁。
+对于不支持重复加锁的锁，如果线程持有某个锁，而后又再次申请锁，因为该锁已经被自己持有，再次申请锁必然得不到满足，从而导致死锁。
 
 ## 这种情况需要加锁吗？
 
