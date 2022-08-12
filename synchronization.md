@@ -11,7 +11,7 @@
 - CPU通常不会直接操作内存
     - 这是因为有些指令对操作数有限制，比如X86-64限制mov指令的源和目的操作数不能都是内存地址，所以把一个字节从一个内存地址复制到另一个内存地址，需要两条mov汇编指令，先从源地址move到寄存器，再从寄存器move到目标地址
     - 即使mov的一个操作数是内存地址，实际上，CPU处理的时候，也会先将内存地址的数据加载到Cache Line，再作用于Cache Line，而非直接修改内存
-- 多CPU多核系统上，如果Core的local Cache没有对应变量的数据，它并不是只有从内存里加载数据到Cache这一条路，而是会通过CPU/Core间消息，从别的CPU/Core的Cache里拿数据的拷贝
+- 多CPU多核系统上，如果Core的local Cache没有对应变量的数据，它并不是只有从内存里加载数据到Cache这一条路，而是会通过CPU/Core间消息，从别的CPU/Core的Cache里拿数据的拷贝，这个核间消息不是通过共享的总线传递，而是基于Interconnect的message passing
 - 当某个Core更新Local Cache里的数据时，它需要通过CPU/Core间消息把这个写入操作传播到其他Core的Cache，如果其他Core也Cache了这个数据，要让对应Cache Line失效，这个叫写传播（Write Propagation），总线嗅探通过感知到核间消息来实现写传播
 - 另外，某个CPU核心里对数据的操作顺序，必须在其他核心看起来顺序是一样的，这个称为事务的串形化（Transaction Serialization），而做到这一点，则需要CPU的缓存更新需要引入‘锁’的概念，多个核心有相同数据的Cache，那么对于数据的更新，只有拿到锁进行，而基于总线嗅探实现的MESI协议就是为了实现事务串行化，如果一个数据在某个Core的Cache Line是独占（Exclusive）状态，则它相当于拿到了自由修改权，如果一个数据被加载到多个Core的Cache，则是Shared的状态，这时候，需要通过向其他核广播请求，Invalidate其他核里的Cache Line才能修改。
 
@@ -337,13 +337,16 @@ assert(a == 1);
 可以通过在Core Load数据的时候，先检查Store Buffer中是否有悬而未决的a的新值，如果有，则取新值；否则从cache取a的副本。这种技术在多级流水线CPU设计的时候就经常使用，叫Store Forwarding。有了Store Buffer Forwarding，就能确保单核程序的执行遵从程序顺序性，但多核还是有问题，让我们考查下面的程序：
 
 ```c++
-int a = 0, b = 0;
+int a = 0; // 被CPU1 CACHE
+int b = 0; // 被CPU0 CACHE
 
+// CPU0执行
 void x() {
     a = 1;
     b = 2;
 }
 
+// CPU1执行
 void y() {
     while (b);
     assert(a == 1);
@@ -351,7 +354,7 @@ void y() {
 ```
 
 假设a和b都被初始化为0；CPU0执行x()函数，CPU1执行y()函数；变量a在CPU1的local Cache里，变量b在CPU0的local Cache里。
-    - CPU0执行`a = 1;`的时候，因为a不在CPU0的local cache，CPU0会把a的新值1写入Store Buffer里，并发送Read Invalidate消息去其他CPU获得a的值
+    - CPU0执行`a = 1;`的时候，因为a不在CPU0的local cache，CPU0会把a的新值1写入Store Buffer里，并发送Read Invalidate消息给其他CPU
     - CPU1执行`while (b);`,因为b不在CPU1的local cache里，CPU1会发送Read Invalidate消息去其他CPU获取b的值
     - CPU0执行`b = 2;`，因为b在CPU0的local Cache，所以直接更新local cache中b的副本
     - CPU0收到CPU1发来的读b请求，把b的新值（2）发送给CPU1；同时存放b的Cache Line的状态被设置为Shared，以反应b同时被CPU0和CPU1 cache住的事实
@@ -366,7 +369,7 @@ void y() {
 
 收到Invalidate消息的core需要回Invalidate ACK，一个个core都这样ACK，等所有core都回复完，Core1才能修改它，这样CPU就白白浪费。
 
-事实上，其他核在收到Invalidate消息后，会把Invalidate消息缓存起来，并立即回复ACK，真正Invalidate可以延后再做，这样一方面不会导致Core1不必要的Stall，另一方面也提供了进一步优化可能，比如在一个CacheLine里的多个变量的Invalidate可以攒一次做了。
+事实上，其他核在收到Invalidate消息后，会把Invalidate消息缓存到Invalidate Queue，并立即回复ACK，真正Invalidate动作可以延后再做，这样一方面因为Core可以快速返回别的Core发出的Invalidate请求，不会导致发生Invalidate请求的Core不必要的Stall，另一方面也提供了进一步优化可能，比如在一个CacheLine里的多个变量的Invalidate可以攒一次做了。
 
 但写Store Buffer的方式其实是Write Invalidate，它并非立即写入内存，如果其他核此时从内存读数，则有可能不一致。
 
@@ -382,13 +385,48 @@ void y() {
 ```c++
 void x() {
     a = 1;
-    smp_mb();
+    wmb();
     b = 2;
 }
 ```
 像上面那样在a=1后、b=2前插入一条内存屏障语句，就能确保a=1先于b=2生效，从而解决了内存乱序访问问题，那插入的这句smp_mb()，到底会干什么呢？
 
-回忆前面的流程，CPU0在执行完`a = 1`之后，执行smp_mb()操作，这时候，它会给Store Buffer里的所有数据项做一个标记（marked），然后继续执行`b = 2`，但这时候虽然b在自己的cache里，但由于store buffer里有marked条目，所以，CPU0不会修改cache中的b，而是把把它写入Store Buffer；所以CPU0收到Read消息后，会把b的0值发给CPU1，所以继续在`while (b);`自旋。
+回忆前面的流程，CPU0在执行完`a = 1`之后，执行smp_mb()操作，这时候，它会给Store Buffer里的所有数据项做一个标记（marked），然后继续执行`b = 2`，但这时候虽然b在自己的cache里，但由于store buffer里有marked条目，所以，CPU0不会修改cache中的b，而是把它写入Store Buffer；所以CPU0收到Read消息后，会把b的0值发给CPU1，所以继续在`while (b);`自旋。
+
+简而言之，Core执行到write memory barrier（wmb）的时候，如果Store Buffer还有悬而未决的store操作，则都会被mark上，直到被标注的Store操作进入内存后，后续的Store操作才能被执行，因此wmb保障了barrier前后操作的顺序，它不关心barrier前的多个操作的内存序，以及barrier后的多个操作的内存序，是否与Global Memory Order一致。
+
+```
+a = 1;
+b = 2;
+wmb();
+c = 3;
+d = 4;
+```
+
+wmb()保证`a = 1; b = 2;`发生在`c = 3; d = 4;`之前，不保证`a = 1`和`b = 2`的内存序，也不保证`c = 3`和`d = 4`的内部序。
+
+**Invalidate Queue的引入的问题**
+就像引入Store Buffer会影响Store的内存一致性，Invalidate Queue的引入会影响Load的内存一致性：
+
+因为Invalidate queue会缓存其他核发过来的消息，比如Invalidate某个数据的消息被delay处置，导致core在Cache Line中命中这个数据，而这个Cache Line本应该被Invalidate消息标记无效。
+
+如何解决这个问题呢？
+- 一种思路是硬件确保每次load数据的时候，需要确保Invalidate Queue被清空，这样可以保证load操作的强顺序。
+- 软件的思路，就是仿照wmb()的定义，加入rmb()约束。rmb()给我们的invalidate queue加上标记。当一个load操作发生的时候，之前的rmb()所有标记的invalidate命令必须全部执行完成，然后才可以让随后的load发生。这样，我们就在rmb()前后保证了load观察到的顺序等同于global memory order。
+
+所以，我们可以像下面这样修改代码：
+
+```c++
+a = 1;
+wmb();
+b = 2;
+```
+
+```c++
+while(b != 2) {};
+rmb();
+assert(a == 1);
+```
 
 **系统对内存屏障的支持**
 gcc编译器在遇到内嵌汇编语句`asm volatile("" ::: "memory");`将以此作为一条内存屏障，重排序内存操作，即此语句之前的各种编译优化将不会持续到此语句之后。
@@ -402,6 +440,14 @@ CPU内存屏障
 - 通用barrier，保证读写操作有序， mb()和smp_mb()
 - 写操作barrier，仅保证写操作有序，wmb()和smp_wmb()
 - 读操作barrier，仅保证读操作有序，rmb()和smp_rmb()
+
+**小结**
+为了提高处理器的性能，SMP中引入了store buffer(以及对应实现store buffer forwarding)和invalidate queue。
+
+store buffer的引入导致core上的store顺序可能不匹配于global memory的顺序，对此，我们需要使用wmb()来解决。
+invalidate queue的存在导致core上观察到的load顺序可能与global memory order不一致，对此，我们需要使用rmb()来解决。
+
+由于wmb()和rmb()分别只单独作用于store buffer和invalidate queue，因此这两个memory barrier共同保证了store/load的顺序。
 
 #### lock-free
 线程同步分为阻塞型同步和非阻塞型同步，互斥量、信号、条件变量这些系统提供的机制都属于阻塞型同步，在争用资源的时候，会导致调用线程阻塞，而非阻塞型同步是在无锁的情况下，通过某种算法和技术手段实现不用阻塞而同步。
