@@ -18,8 +18,10 @@
 
 # 工具类
 - [QUICK BENCHMARK](https://quick-bench.com/q/xNcDmD0N88EYUZlYSCfkL53f0Zg)
+- [quick-bench](https://quick-bench.com/)
 - [GODBLOT](https://rust.godbolt.org/)
 - [流程图](http://flowchart.js.org/)
+- [时序图](https://bramp.github.io/js-sequence-diagrams/)
 - [马克飞象](https://maxiang.io/)
 
 # 非技术相关

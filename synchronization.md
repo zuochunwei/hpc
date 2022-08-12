@@ -3,6 +3,16 @@
 
 并发编程的错误非常诡谲且难以定位，它总是隐藏在某个的角落，大多数时候，程序运转良好，等代码交付上线后，莫名其妙的出错，就像墨菲定律描述的那样：凡是可能出错，就一定会出错。
 
+## 数据不一致源于什么？
+1. CPU与内存访问性能差距很大，Cache被作为内存的缓存插入到CPU与内存之间，数据会在Cache里缓存内存数据的副本，内存数据与缓存数据不总是一致。比如修改变量（写入数据），如果采取写穿透（Write Through）的方式，则会在更新缓存中对应的Cache Line的同时把数据写入内存，如果数据不在缓存，则直接写入内存，但每次写操作都写入内存，而内存的访问时延通常高达几十个指令周期，这种写的方式性能太低。而采用写回（Write Back）的方式，如数据在Local Cache里，则更新缓存后就直接返回，这样就减少访问内存的频率，也就提升了性能，但这样的话，内存数据和Cache里的数据是不一致的。
+2. 现代处理器朝着多CPU多核架构发展，每个核有自己的L1/L2 Cache ，核之间共享L3 Cache，然后再通过总线连接内存，内存被所有CPU/Core所共享，所以，一个内存数据会被多个CPU/Core Cache，不仅内存与Cache中的数据可能不一致，Cache里的多份拷贝也会不一致，Cache一致性协议用于处理这个问题。
+
+## CPU如何使用内存数据？
+- CPU通常不会直接操作内存
+    - 这是因为有些指令对操作数有限制，比如X86-64限制mov指令的源和目的操作数不能都是内存地址，所以把一个字节从一个内存地址复制到另一个内存地址，需要两条mov汇编指令，先从源地址move到寄存器，再从寄存器move到目标地址。
+    - 即使mov的一个操作数是内存地址，实际上，CPU处理的时候，也会先将内存地址的数据加载到Cache Line，再作用于Cache Line。
+- 多CPU多核系统上，如果Core的local Cache没有对应变量的数据，它并不是只有从内存里加载数据到Cache这一条路，通过CPU/Core间消息，可以从别的CPU/Core的Cache里拿到数据拷贝，当Core更新Cache里的数据时，也需要通过发送CPU/Core间消息，让其他Core的对应Cache Line失效。
+
 ## 为什么需要多线程同步？
 我们先用2个例子来描述，如果不做线程同步，程序会出现什么问题。
 
@@ -21,7 +31,7 @@ bool sell(int num) {
 
 单线程下，sell函数被多次调用，程序运转良好，结果符合预期，但在多线程环境下，会出错。
 
-为了理解上述代码行为，需要先了解一个基本事实：程序变量存放在内存中，对变量做加减，会先将变量加载（load）到通用寄存器，再执行算术运算（更新寄存器中的值），最后把寄存器的新值存入（store）内存位置。
+为了理解上述代码行为，需要先了解一个基本事实：程序变量存放在内存中，对变量做加减，会先将变量加载到通用寄存器，再执行算术运算（更新寄存器中的值），最后把寄存器的新值存入内存位置。
 
 寄存器里会保存内存变量值的副本，对变量的加减乘除等运算直接作用于副本，而非变量内存位置。不过，如果对变量赋值，则指令会接受一个内存位置作为操作数，指令会直接操作内存位置。
 
@@ -93,8 +103,8 @@ int main() {
 - 需要出现数据不一致的情况，是不能忍受的错误（比如的超卖，计数错误），否则，也不必同步（比如只是记一条粗略统计的日志，计数不准确也没有关系），这一点往往被忽略
 
 ## 保护的到底是什么？
-- 首先，明确一点，多线程同步，保护的是数据，而非代码，代码保存在进程的文本段，程序运行过程中，只会从保存文本段的内存位置读取指令序列，而不会修改文本（代码）段。
-- 其次，细化一点，我们保护的是全局资源/数据、static局部数据、或者通过指针/引用指向的堆内存上的数据；而普通局部变量则通常不需要保护，因为局部变量位于栈上，每个线程有独立的栈，线程栈是相互隔离的，不通过特殊手段不可互访。
+- 多线程同步，保护的是数据，而非代码，代码保存在进程的文本段，程序运行过程中，只会从保存文本段的内存位置读取指令序列，而不会修改文本（代码）段。
+- 细化一下，我们保护的是全局资源/数据、static局部数据、或者通过指针/引用指向的堆内存上的数据；而普通局部变量则通常不需要保护，因为局部变量位于栈上，每个线程有独立的栈，线程栈是相互隔离的，不通过特殊手段不可互访。
 
 ## 多线程同步机制有哪些？
 线程间同步的机制有很多，Posix线程同步机制包括互斥锁（Mutex）、读写锁（Reader-Writer Lock）、自旋锁（Spin Lock）、条件变量（Condition Variable）、屏障（Barrier）等。
@@ -293,7 +303,7 @@ b = 2;
 
 ### Store Buffer
 
-**我们先讲为什么需要Store Buffer？**
+**为什么需要Store Buffer？**
 前面已经提到了Store Buffer，考虑下面的代码：
 
 ```c
@@ -303,12 +313,12 @@ void set_a()
 }
 ```
 
-- 假设运行在core0上的set_a()对整型变量a赋值1，计算机通常不会直接对写穿通到内存，而是会修改该变量在Cache里的Cache Line
+- 假设运行在core0上的set_a()对整型变量a赋值1，计算机通常不会直接写穿通到内存，而是会在Cache中修改对应Cache Line
 - 如果Core0的Cache里没有a，赋值操作（store）会造成Cache Miss
-- Core0会stall在等待a的cache就绪（比如从内存加载对应的Cache Line），但Stall会损害CPU性能，相当于Core在这里停顿，白白浪费着宝贵的CPU时间
+- Core0会stall在等待Cache就绪（比如从内存加载变量a到对应的Cache Line），但Stall会损害CPU性能，相当于CPU在这里停顿，白白浪费着宝贵的CPU时间
 - 有了Store Buffer，当变量在Cache中没有就位的时候，就先Buffer住这个Store操作，而Store操作一旦进入Store Buffer，core便认为自己Store完成，当随后Cache就位，store会自动写入对应cache。
 
-所以，我们需要Store Buffer，每个CPU的Core都有独立的Store Buffer，每个Core访问私有的Store Buffer, Store Buffer帮助CPU遮掩了store操作带来的延迟。
+所以，我们需要Store Buffer，每个Core都有独立的Store Buffer，每个Core都访问私有的Store Buffer, Store Buffer帮助CPU遮掩了Store操作带来的延迟。
 
 **Store Buffer会带来什么问题？**
 ```c++
@@ -318,13 +328,12 @@ assert(a == 1);
 ```
 上面的代码，断言a==1的时候，需要读（load）变量a的值，而如果a在被赋值前就在Cache中，就会从Cache中读到a的旧值（可能是1之外的其他值），所以断言就可能失败。
 
-问题出在变量a除保存在内存外，还有2份拷贝，一份在store buffer里，一份在cache里，如果不考虑这2份拷贝的关系，就会出现数据不一致。
+但这样的结果显然是不能接受的，它违背了最直观的程序顺序性。
 
-那怎么修复这个问题？可以通过在Core load数据的时候，先检查store buffer中是否有悬而未决的a的新值，如果有，则取新值；否则从cache取a的副本。这种技术在多级流水线CPU设计的时候就经常使用，叫Store Forwarding。
+问题出在变量a除保存在内存外，还有2份拷贝，一份在Store Buffer里，一份在Cache里，如果不考虑这2份拷贝的关系，就会出现数据不一致。那怎么修复这个问题呢？
 
-有了store buffer forwarding，就能确保单核程序的执行遵从程序顺序性，多核还是有问题。
+可以通过在Core Load数据的时候，先检查Store Buffer中是否有悬而未决的a的新值，如果有，则取新值；否则从cache取a的副本。这种技术在多级流水线CPU设计的时候就经常使用，叫Store Forwarding。有了Store Buffer Forwarding，就能确保单核程序的执行遵从程序顺序性，但多核还是有问题，让我们考查下面的程序：
 
-考查下面的程序：
 ```c++
 int a = 0, b = 0;
 
@@ -334,29 +343,28 @@ void x() {
 }
 
 void y() {
-    while (b) {}
+    while (b);
     assert(a == 1);
 }
 ```
 
-- a和b都被初始化为0
-- CPU0执行x()函数，CPU1执行y()函数
-- 变量a在CPU1的local Cache里，变量b在CPU0的local Cache里
-
-    - CPU0执行`a = 1`的时候，因为a不在CPU0的local cache，CPU0会把a的新值1写入Store Buffer里，并发送Read Invalidate消息去其他CPU获得a的值
-    - CPU1执行`while (b) {}`,因为b不在CPU1的local cache里，CPU1会发送Read Invalidate消息去其他CPU获取b的值
-    - CPU0执行`b = 2`，因为b在CPU0的local Cache，所以直接更新local cache中b的副本
-    - CPU0收到CPU1发来的Read Invalidate消息，把b的新值（1）发送给CPU1，存放b的Cache Line的状态被设置为Shared以反应b同时被CPU0和CPU1 cache住的事实
-    - CPU1收到b的新值（1）后结束循环，继续执行`assert(a == 1)`，因为此时local Cache中的a值为0，所以断言失败
-    - CPU1收到CPU0发来的Read Invalidate后，更新a的值为1，但为时已晚，上一步已经崩了
+假设a和b都被初始化为0；CPU0执行x()函数，CPU1执行y()函数；变量a在CPU1的local Cache里，变量b在CPU0的local Cache里。
+    - CPU0执行`a = 1;`的时候，因为a不在CPU0的local cache，CPU0会把a的新值1写入Store Buffer里，并发送Read Invalidate消息去其他CPU获得a的值
+    - CPU1执行`while (b);`,因为b不在CPU1的local cache里，CPU1会发送Read Invalidate消息去其他CPU获取b的值
+    - CPU0执行`b = 2;`，因为b在CPU0的local Cache，所以直接更新local cache中b的副本
+    - CPU0收到CPU1发来的读b请求，把b的新值（2）发送给CPU1；同时存放b的Cache Line的状态被设置为Shared，以反应b同时被CPU0和CPU1 cache住的事实
+    - CPU1收到b的新值（2）后结束循环，继续执行`assert(a == 1);`，因为此时local Cache中的a值为0，所以断言失败
+    - CPU1收到CPU0发来的Read Invalidate后，更新a的值为1，但为时已晚，程序在上一步已经崩了
 
 怎么办？答案留到内存屏障一节揭晓。
 
 ### Invalidate Queue
 **为什么需要Invalidate Queue**
-当一个变量加载到多个core的Cache，则这个CacheLine处于Share状态，如果Core1要修改这个变量，则需要通过发送核间消息Invalidate来通知其他Core把对应的Cache Line置为Invalid，当其他Core都Invalid这个CacheLine后，则本Core获得该变量的独占权，这个时候就可以修改它了。
+当一个变量加载到多个core的Cache，则这个CacheLine处于Shared状态，如果Core1要修改这个变量，则需要通过发送核间消息Invalidate来通知其他Core把对应的Cache Line置为Invalid，当其他Core都Invalid这个CacheLine后，则本Core获得该变量的独占权，这个时候就可以修改它了。
 
-收到Invalidate消息的core会需要回Invalidate ACK，一个个core都这样ACK，等所有core都回复完，Core1才能修改它，但这样太慢了，事实上，其他核在收到Invalidate消息后，会把Invalidate消息缓存起来，并立即回复ACK，这样一方面不会导致Core1不必要的Stall，另一方面也提供了进一步优化可能，比如在一个CacheLine里的多个变量的Invalidate可以攒一次做了。
+收到Invalidate消息的core需要回Invalidate ACK，一个个core都这样ACK，等所有core都回复完，Core1才能修改它，这样CPU就白白浪费。
+
+事实上，其他核在收到Invalidate消息后，会把Invalidate消息缓存起来，并立即回复ACK，真正Invalidate可以延后再做，这样一方面不会导致Core1不必要的Stall，另一方面也提供了进一步优化可能，比如在一个CacheLine里的多个变量的Invalidate可以攒一次做了。
 
 但写Store Buffer的方式其实是Write Invalidate，它并非立即写入内存，如果其他核此时从内存读数，则有可能不一致。
 
@@ -369,7 +377,6 @@ void y() {
 
 内存屏障，其实就是提供一种机制，确保代码里写顺序写下的多行，会按照书写的顺序，被存入内存，主要是解决StoreBuffer引入导致的写入内存间隙的问题。
 
-所以，只需要像下面这样在a=1后、b=2前插入一条内存屏障语句，就能确保a=1先于b=2生效，从而解决了内存乱序访问问题。
 ```c++
 void x() {
     a = 1;
@@ -377,6 +384,9 @@ void x() {
     b = 2;
 }
 ```
+像上面那样在a=1后、b=2前插入一条内存屏障语句，就能确保a=1先于b=2生效，从而解决了内存乱序访问问题，那插入的这句smp_mb()，到底会干什么呢？
+
+回忆前面的流程，CPU0在执行完`a = 1`之后，执行smp_mb()操作，这时候，它会给Store Buffer里的所有数据项做一个标记（marked），然后继续执行`b = 2`，但这时候虽然b在自己的cache里，但由于store buffer里有marked条目，所以，CPU0不会修改cache中的b，而是把把它写入Store Buffer；所以CPU0收到Read消息后，会把b的0值发给CPU1，所以继续在`while (b);`自旋。
 
 **系统对内存屏障的支持**
 gcc编译器在遇到内嵌汇编语句`asm volatile("" ::: "memory");`将以此作为一条内存屏障，重排序内存操作，即此语句之前的各种编译优化将不会持续到此语句之后。
