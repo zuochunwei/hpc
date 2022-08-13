@@ -24,13 +24,27 @@ NUMA解决了SMP扩展性的问题。NUMA的主要特征是将CPU进行分组，
 
 CPU除了多核并化的优化外，另一个比较重要的优化便是SIMD。SIMD在很多基础软件中有很多重要的应用，如BloomFilter，加密算法等。
 
-SIMD(**Single instruction, multiple data**),即单指令，多数据，是费林分类法(Flynn's taxonomy)下的一种并行处理技术。从1997年面向x86架构下的MMX指令扩展（80-bits 寄存器），到后来的SSE1-SSE4.2(128bits XMM寄存器)，AVX/AVX2（256bits YMM寄存器）， AVX512（512bits ZMM寄存器），SIMD寄存器的长度每增大一倍，一般相应的性能也得到显著提升。除了Intel平台，AMD也曾经发布了基于x86架构的扩展指令集SSE5。Arm平台在ARMv7也有NEON sets，一种128-bits的固定长度的指令集; 在ARMv8开始支持的SVEand SVE2 instruction sets(最大到2048 bits)可变长度的指令集。
+SIMD(**Single instruction, multiple data**),即单指令，多数据，是费林分类法(Flynn's taxonomy)下的一种并行处理技术。从1997年面向x86架构下的MMX指令扩展（80-bits 寄存器），到后来的SSE1-SSE4.2(128bits XMM寄存器)，AVX/AVX2（256bits YMM寄存器）， AVX512（512bits ZMM寄存器），SIMD寄存器的长度每增大一倍，一般相应的性能也得到显著提升。除了Intel平台，AMD也曾经发布了基于x86架构的扩展指令集SSE5。Arm平台在ARMv7也有NEON sets，一种128-bits的固定长度的指令集; 在ARMv8开始支持的SVEand SVE2 instruction sets(最大到2048 bits)可变长度的指令集。指令集架构简写为ISA(Instruction Set Architecture),大多数Linux服务器中均支持SSE4_2，AVX/AVX2，AVX512等指令集。通过lscpu可以通过Flags查看当前CPU支持的ISA。
+
+预备知识：IPC,FLOPS
+
+在科学计算汇总，一般使用FLOPS都是衡量处理器的算力，FLOPS即Floating Point Operations Per Second，表示每秒钟执行的单精度浮点数操作数。一般理论上最大的FLOPS计算如下:
+$$
+\begin {aligned}
+peak\ FLOPS = &FP\ operators\ per\ instructions\ (SIMD\ width) \\  
+						&\times instructions\ per\ cycle \\
+						&\times cycles\ per\ second\ (frequency)
+\end {aligned}
+$$
+其中，IPC即instructions per cycle，表示每个CPU时钟周期内的指令数，处理器并行度越高则IPC越大。可以看出在现代CPU时钟频率趋于不变时，增大SIMD的width便可以增加处理器的算力。前提是程序中是否可以利用向量化的技术
 
 ### **自动向量化技术**
 
-在GCC编译器中,指定优化选项 `-O3` or `-ftree-vectorize` 即可开启自动向量化。
+在GCC编译器中,指定优化选项 `-O3` or `-ftree-vectorize` 即可开启自动向量化。除此之外，我们可以通过编译器支持的指令来提示编译器进行自动向量化技术编译代码。通常自动向量化编译的代码性能都不错。
 
-\_\_restrict__ 关键字告诉编译器该变量的内存独占且不存在重叠，可以进行SIMD优化。
+* __restrict
+
+GCC或LLVM编译器都提供了\_\_restrict关键字来帮助程序实现自动向量化。\_\_restrict 关键字的作用是告诉编译器该变量的内存独占且不存在重叠，可以进行SIMD优化。
 
 ```c++
 void add_restrict(int * __restrict a, const int * b, const int * c) {
@@ -44,7 +58,9 @@ void add_norestrict(int * a, const int * b, const int * c) {
 }
 ```
 
-上面两个函数实现是简单的int数组相加。差别在于a是否增加了__restrict关键字，\_\_restrict关键字表明a的内存是独占的，不会与其它变量b,c重叠或者共享。load以及store指令是独立的，可以并行执行，所以编译器可以进行SIMD优化。如果不指定\_\_restrict,则编译器不能保证a与b,c之间不会存在重叠的部分，所以load和store指令可能会操作同一块内存，所以必须顺序执行。从汇编代码来看，就比较明显了。add_restrict函数直接使用xmm寄存器通过\_mm_add_epi32实现SIMD的优化，但add\_norestrict函数则不能优化，在汇编中rdx表示的是变量c，rsi表示变量b, rdi表示变量a，只能按顺序将rdx寄存器地址的值压入eax累加器中，然后add rsi寄存器地址的值，然后将结果保存到rdi寄存器中，一共计算4次，相比向量化的版本，未加\_\_restrict消耗的cpu instuctions要更多。
+上面两个函数实现是简单的int数组相加。差别在于a是否增加了__restrict关键字，\_\_restrict关键字表明变量a的内存是独占的，不会与其它变量b,c重叠或者共享。因此load以及store指令是互相独立的，可以并行执行，所以编译器可以进行SIMD优化。如果不指定\_\_restrict,则编译器不能保证a与b,c之间不会存在重叠的部分，所以load和store指令可能会操作同一块内存，所以store必须等待load执行完成后才可以执行。
+
+从下面的汇编代码来看，就比较明显了。add_restrict函数直接使用xmm寄存器通过\_mm_add_epi32实现SIMD的优化，但add\_norestrict函数则不能优化，在汇编中rdx表示的是变量c，rsi表示变量b， rdi表示变量a，执行时按顺序将rdx寄存器地址的值压入eax累加器中，然后add指令与 rsi寄存器地址的值相加，然后将eax累加器的结果保存到rdi寄存器，也就是变量a中，一共计算4次，相比向量化的版本，未加\_\_restrict消耗的cpu instuctions要更多。
 
 ```
 add_restrict(int*, int const*, int const*):               # @add_restrict(int*, int const*, int const*)
@@ -69,7 +85,9 @@ add_norestrict(int*, int const*, int const*):             # @add_norestrict(int*
         ret
 ```
 
-Pragma帮助编译器自动向量化，pragma GCC ivdep表示下面的循环没有依赖关系，编译器可以进行自动向量化编译。
+* simd pragma
+
+pragma是编译器提供的帮助编译器自动向量化的指令，比如: pragma GCC ivdep表示下面的循环没有依赖关系，编译器可以进行自动向量化编译。
 
 ```c++
 void add (int * a, const int * b, int n) {
@@ -79,7 +97,17 @@ void add (int * a, const int * b, int n) {
 }
 ```
 
-pragma GCC unroll n,表示帮助编译器循环展开。
+对于pragma GCC ivdep而言，编译器会进行编译时的依赖关系检查决定是否进行自动向量化。而pragma omp simd可以强制编译器进行自动向量化优化。OpenMP是跨平台共享内存的API，支持C, C++, fortran语言。通过pragma omp simd告诉编译器不必检查依赖关系，由用户保证，只需要强制自动向量化即可。需要注意的是，如果想要使用openmp，在编译时需要加入编译选项-fopenmp。并且可以通过-mavx2来制定使用AVX2指令集。
+
+```c++
+void add (int * a, const int * b, int n) {
+  #pragma omp simd
+  for (int i = 0; i < n; i++)
+      a[i] += b[i];
+}
+```
+
+pragma还可以提示编译器进行循环展开优化。比如:pragma GCC unroll n。在循环内展开有助于减少程序的循环次数，更好的利用cache line优化等。
 
 ```c++
 void add (int * a, const int * b, int n) {
@@ -95,13 +123,29 @@ void add (int * a, const int * b, int n) {
 }
 ```
 
-以下代码等价于上面的实现
+以下代码等价于上面的实现，通过pragma 提示编译器以下循环可以展开，并且可以提示展开的大小，使得程序更加简洁。
 
 ```c++
 void add (int * a, const int * b, int n) {
   #pragma GCC unroll 4
   for (int i = 0; i < n; i++)
       a[i] += b[i];
+}
+```
+
+* GCC vector type
+
+c++中有valarray类型执行向量化计算。GCC中也可以通过\_\_attribute\_\_(vector_size(32))定义一个vector类型，这里的32表示vector的大小，如果是int类型，则vector可以表示8个int。并且vector之间支持加减乘除等运算符。所以对于vector type我们可以有下面的用法。
+
+```
+typedef int int8 __attribute__((vector_size(32)));
+
+void add (const int * a, const int * b, int *c, int n) {
+	size_t i = 0;
+  for (i = 0; i < n - 7; i++)
+      *((int8*)&c[i]) = *((int8*)&a[i]) + *((int8*)&b[i]);
+  for (; i < n; ++i)
+      c[i] = a[i] + b[i];
 }
 ```
 
@@ -171,11 +215,26 @@ int main()
 }
 ```
 
-上面的程序展示了如何使用AVX指令集实现两个向量的相加。首先通过\_mm256_setr_ps定义两个\_\_m256的向量，通过_mm256_add_ps将向量相加，最后通过\_mm256_store_ps将相加后的结果拷贝到float数组中。从程序中可以看到我们只用了1个SIMD指令就完成了8个float的相加，这也是SIMD高效的原因。
+上面的程序展示了如何使用AVX2指令集实现两个向量的相加。首先通过\_mm256_setr_ps定义两个\_\_m256的向量，通过_mm256_add_ps将向量相加，最后通过\_mm256_store_ps将相加后的结果拷贝到float数组中。从程序中可以看到我们只用了1个SIMD指令就完成了8个float的相加，这也是SIMD高效的原因。
 
-#### SIMD aggregation
+AVX2中支持丰富的指令集，利用这些指令我们可以高效实现一些向量化的函数，比如对于如下的条件判断函数，其作用是求源数组中所有正数的和，通常我们可以有如下实现:
 
+```c++
+int sum_positive_scalar(const int * src, size_t count)
+  {
+      int res = 0;
+      for (size_t i = 0; i < count; ++i) {
+          if(src[i] >= 0) {
+              res += src[i];
+          }
+      }
+      return res;
+  }
 ```
+
+如果开启自动向量化，上面的程序一般可以进行自动向量化，但如果分支条件变得更加复杂，编译器无法自动向量化时，我们可以通过手动向量化该函数来加速计算。
+
+```c++
   int hsum(__m256i x) {
       __m128i l = _mm256_extracti128_si256(x, 0);
       __m128i h = _mm256_extracti128_si256(x, 1);
@@ -197,8 +256,6 @@ int main()
       return hsum(res);
   }
 ```
-
-
 
 ### Out-of-Order Execution
 
@@ -338,7 +395,7 @@ public:
     void end() {
         end_time = std::chrono::high_resolution_clock::now();
         elapse = end_time - start_time;
-        std::cout << "time elapse: " << elapse.count()*1000 << "ms" <<  std::endl;
+        std::cout << "time elapse: " << elapse.count() * 1000 << "ms" <<  std::endl;
     }
 
 private:
