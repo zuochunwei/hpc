@@ -257,6 +257,12 @@ int sum_positive_scalar(const int * src, size_t count)
   }
 ```
 
+* BloomFilter的SIMD实现
+
+
+
+
+
 ### Out-of-Order Execution
 
 为了最大化流水线的执行效率，CPU通过乱序执行来优化并发执行的效率。乱序执行分为两种情况：
