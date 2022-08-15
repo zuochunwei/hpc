@@ -43,6 +43,14 @@
 - 生产者/消费者模式 mutex+cv 
 - 如何设置线程数？
 
+# IO
+
+* blockingIO
+
+* nonblockingIO
+
+* AsyncIO
+
 # 定位系统瓶颈(liu)
 - 查看内存带宽、内存占用、cache命中
 - CPU利用率

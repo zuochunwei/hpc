@@ -359,16 +359,16 @@ C++11 中的std::atomic描述了 6 种可以应用于原子变量的内存次序
 
 下面我们分别来介绍一下std::atomic原子变量的内存模型
 
-1. ** sequential consistent memory order**
+1. **sequential consistent memory order**
 
-   sequential consistent是最强的内存序，也是std::atomic默认的内存序。其作用于memory_fence()基本类似,具有最强约束的可见性。
+   sequential consistent叫做顺序一致性。是最强的内存序，也是std::atomic默认的内存序。它要求所有线程之间的全局同步。因此在多线程间的同步开销较大，相比于其它线程模型性能会稍差一点。
 
    * 在`store()`前的所有读写操作，不允许被移动到这个`store()`的后面。
    * 在`store()`后的所有读写操作，不允许被移动到这个`store()`的前面。
    * 在`load()`前的所有读写操作，不允许移动到这个`load()`的后面。
    * 在`load()`后的所有读写操作，不允许移动到这个`load()`的前面。
 
-   在下面的程序中z != 0的断言不会失败。
+   在下面的程序中z可能等于1，或者2，但z一定不等于0，所以z != 0的断言不会失败。
 
    ```
    #include <thread>
@@ -420,7 +420,7 @@ C++11 中的std::atomic描述了 6 种可以应用于原子变量的内存次序
 
 2. **relaxed memory order**
 
-   relaxed内存序要求`load()`和`store()`都要是`memory_order_relaxed`,relaxed语义只能保证同一个原子变量的`load()`和`store()`是顺序的，但不能提供跨线程的同步。
+   relaxed内存序要求`load()`和`store()`都要是`memory_order_relaxed`,relaxed语义只能保证同一个原子变量的修改是顺序的，也就是说当前线程修改后再读一定读取的是最新修改的值，但其它线程不一定读取的是最新的值。relaxed内存序不能提供跨线程的同步。
 
    比如下面的程序中，是允许D->A->B->C的执行顺序的，relaxed并不具备跨线程同步的语意，只能保证A->B的顺序。所以下面的程序有可能输出为x=y=42的结果
 
@@ -447,16 +447,16 @@ C++11 中的std::atomic描述了 6 种可以应用于原子变量的内存次序
    if (r2 == 42) y.store(42, std::memory_order_relaxed);
    ```
 
-   relaxed内存序最典型的使用场景就是递增计数器，比如 fetch_add(1, std::memory_order_relaxed);
+   relaxed内存序最典型的使用场景就是递增计数器，比如 `fetch_add(1, std::memory_order_relaxed);`
 
 3. **Acquire release memory order**
 
-   acquire release模型下`store()`使用的是`memory_order_release`,而`load()`使用的是`memory_order_acquire`.
+   acquire release模型下`store()`使用的是`memory_order_release`,而`load()`使用的是`memory_order_acquire`.acquire release虽然不同线程可以看到不同的排序，但排序的顺序是受限制的，限制条件如下:
 
    - 在`store()`之前的所有读写操作，不允许被移动到这个`store()`的后面。
    - 在`load()`之后的所有读写操作，不允许被移动到这个`load()`的前面。
 
-   在下面的程序中，thread2中ptr.store(p, std::memory_order_release)之前的所有store()操作都一定会完成，而thread1中的while (!(p2 = ptr.load(std::memory_order_acquire)))之后的load()也不会提前执行，所以*p2 == "Hello"和data == 42的断言一定不会失败。
+   在下面的程序中，thread2中`ptr.store(p, std::memory_order_release)`之前的所有store()操作都一定会完成，而thread1中的`while (!(p2 = ptr.load(std::memory_order_acquire)))`之后的load()也不会提前执行，所以`*p2 == "Hello"`和`data == 42`的断言一定不会失败。
 
    ```
    //thread1
