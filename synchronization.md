@@ -498,6 +498,137 @@ public:
 };
 ```
 
+## 伪共享（false sharing）
+```c++
+const size_t shm_size = 16*1024*1024; //16M
+static char shm[shm_size];
+std::atomic<size_t> shm_offset{0};
+
+void fa() {
+    for (;;) {
+        auto off = shm_offset.fetch_add(sizeof(long));
+        if (off >= shm_size) break;
+        *(long*)(shm + off) = off;
+    }
+}
+```
+
+考察上面的程序，shm是一块16M的内存块，fa()函数在循环里，把shm视为long类型的数组，依次给每个元素赋值，shm_offset用于记录偏移位置，shm_offset.fetch_add(sizeof(long))原子性的增加shm_offset的值（因为x86_64系统上long的长度为8，所以shm_offset每次会增加8字节），并返回增加前的值，对shm上long数组的每个元素赋值后，就结束循环并从函数返回。
+
+因为shm_offset是atomic类型变量，所以多线程调用fa()依然正常工作，虽然多个线程会竞争shm_offset，但每个线程会排他性的对各long元素赋值，多线程并行会加快对shm的赋值操作。
+
+我们加上多线程调用代码，代码如下：
+```c++
+std::atomic<size_t> step{0};
+
+void work_thread() {
+    const int N = 10;
+    for (int n = 1; n <= N; ++n) {
+        fa();
+        ++step;
+        while (step.load() < n * THREAD_NUM) {}
+        shm_offset = 0;
+    }
+}
+
+int main() {
+    const int THREAD_NUM = 2;
+    std::thread threads[THREAD_NUM];
+    for (int i = 0; i < THREAD_NUM; ++i) {
+        threads[i] = std::move(std::thread(work_thread));
+    }
+    for (int i = 0; i < THREAD_NUM; ++i) {
+        threads[i].join();
+    }
+    return 0;
+}
+```
+启动2个工作线程work_thread，工作线程对shm赋值N（10）轮，step用于work_thread之间每一轮的同步，工作线程调用完fa()后会增加step，等2个工作线程都调用完之后，step的值增加到n * THREAD_NUM后，while()会结束循环，重置shm_offset，重新开始新一轮对shm的赋值。
+
+编译后执行上面的程序，产生如下的结果：
+> time ./a.out
+> real	0m3.406s
+> user	0m6.740s
+> sys	0m0.040s
+
+time用于时间测量，程序运行，耗时3.4秒。
+
+我们稍微修改一下fa函数，有了改进版fa函数fa_fast：
+```c++
+void fa_fast() {
+    for (;;) {
+        const long inner_loop = 16;
+        auto off = shm_offset.fetch_add(sizeof(long) * inner_loop);
+        for (long j = 0; j < inner_loop; ++j) {
+            if (off >= shm_size) return;
+            *(long*)(shm + off) = j;
+            off += sizeof(long);
+        }
+    }
+}
+```
+
+for循环里，shm_offset不再是每次增加8字节（sizeof(long)），而是8*16=128字节，然后在内层的循环里，依次对16个long连续元素赋值。
+
+编译后重新执行程序，结果显示耗时降低到0.06秒，比前一种耗时大幅度降低。
+> time ./a.out
+> real	0m0.062s
+> user	0m0.110s
+> sys	0m0.012s
+
+**分析**
+给我们的第一眼感觉是shm_offset原子变量的fetch_add调用频次降低到了原来的1/16，我们怀疑是原子变量的竞争减少导致程序执行速度加快，为了验证，让我们在内层的循环里加一个原子变量test的fetch_add，为了test.fetch_add()被编译器优化掉，我们在main函数的最后把test的值打印出来，结果显示，执行时间只是稍微增加到`real	0m0.326s`。
+
+所以，很显然，并不是atomic的调用频次减少了的原因。
+
+fa循环里的逻辑很简单：原子增，判断，赋值。我们把fa的里赋值注释掉，发现它的速度得到了很大提升，看来是`*(long*)(shm + off) = off;`这一行代码导致的，但这命名只是一行赋值，反汇编看只是一个mov指令，从寄存器赋值到一个内存地址，为什么会这么慢呢？
+
+**原因**
+现在揭晓原因，导致fa性能底下的元凶是伪共享（false sharing），什么是伪共享？
+
+要说清这个问题，还得联系CPU的架构，以及CPU怎么访问数据。
+
+我们知道CPU有多个核便有多个L1-L2缓存，L1又区分数据缓存（L1-DCache）和指令缓存（L1-ICache），而L3是跨核共享的，L3通过内存总线连接到内存，CPU访问L1 Cache的速度大约是访问内存的100倍，Cache作为CPU与内存之间的缓存层，减少对内存的访问频率。
+
+从内存加载数据的时候，是按CacheLine为长度单位的，CacheLine的长度通常是64字节，所以，那怕你只读一个字节，但是包含该字节的整个Cache Line都会被加载到缓存。
+
+如果一块数据被多个线程访问，那么它便会被加载到多个Core的的Cache中，这些线程在哪个Core上运行，就会被加载到那个Core的Cache中，所以内存中的一个数据，在不同Core的Cache里会同时存在多份拷贝。
+
+如果我们修改了Core1缓存里的某个数据，则该数据所在的CacheLine的状态需要同步给其他Core的缓存，Core之间可以通过核间消息同步状态，比如通过发送Invalidate消息给其他核，接收到该消息的核会把对应CacheLine置为无效，然后重新从内存里加载数据。
+
+MESI协议用来保证多核缓存的一致性，更多的细节可以参考MESI的文章。
+
+因为shm被2个线程同时访问，假设线程1运行在Core1，线程2运行在Core2，所以shm的内存数据会以CacheLine粒度，被同时加载到2个Core的Cache，因为被共享，所以该CacheLine被标注为Shared状态。
+
+线程1在offset为64的位置写入了一个8字节的数据（sizeof(long)），因为要修改一个状态为Shared的CacheLine，所以Core1会发送消息到Core2，去拿到该CacheLine的独占权，在这之后，Core1才能修改Local Cache。
+
+线程1执行完`shm_offset.fetch_add(sizeof(long))`后，shm_offset会增加到72，这时候Core2上运行的线程2也会执行`shm_offset.fetch_add(sizeof(long))`，它返回72并将shm_offset增加到80，线程2接下来要修改shm[72]的内存位置，因为shm[64]和shm[72]在一个CacheLine，而这个CacheLine又被置为Invalidate，所以，它需要从内存里重新加载这一个CacheLine，在之前，Core1上的线程1需要把CacheLine刷到内存。
+
+这样交替执行模式，相当于Core1和Core2之间需要频繁的发送核间消息，收到消息的Core的CacheLine被置为无效，并重新从内存里加载数据到Cache，每次修改后都需要把Cache中的数据刷入内存，再相当于废弃掉了Cache，每次读写都直接跟内存打交道，Cache的作用不复存在，这就是性能低下的原因。
+
+这种多核多线程，因为并发修改临近位置的内存数据，导致CacheLine的频繁失效，内存的频繁Load/Store，从而导致性能急剧下降，这种现象叫伪共享。
+
+另一个常见的现象是线程x和y，分别修改Data的a和b变量。
+```c++
+struct Data
+{
+    int a;
+    int b;
+}
+```
+
+**如何避免这种性能下降**
+
+避免Cache伪共享导致性能下降的思路是用空间换时间的思想，通过增加填充，让a和b两个变量分布到不同的cacheLine，这样就能避免上述问题。
+
+在Linux kernel中存在__cacheline_aligned_in_smp宏定义用于解决false sharing问题。
+
+#ifdef CONFIG_SMP
+#define __cacheline_aligned_in_smp __cacheline_aligned
+#else
+#define __cacheline_aligned_in_smp
+#endif
+
 ## 相关概念
 ### 线程安全与可重入
 代码所在的进程有多个线程在同时运行，这些线程可能在同时运行这些代码，如果多线程下运行的结果和单线程运行的结果是一样的，那么线程就是安全的。反之，线程就是不安全的。
