@@ -512,7 +512,7 @@ void f() {
     }
 }
 ```
-考察上面的程序，shm是一块16M字节的内存，我测试的机器的L3 Cache是32M，所以挑选16M这个值确保shm数组在Cache里能存放的下。
+考察上面的程序，shm是一块16M字节的内存，我测试的机器的L3 Cache是32M，所以挑选16M这个值确保shm数组在Cache里能存放得下。
 
 f()函数在循环里，把shm视为long类型的数组，依次给每个元素赋值，shm_offset用于记录偏移位置，shm_offset.fetch_add(sizeof(long))原子性的增加shm_offset的值（因为x86_64系统上long的长度为8，所以shm_offset每次增加8字节），并返回增加前的值，对shm上long数组的每个元素赋值后，结束循环从函数返回。
 
@@ -704,13 +704,25 @@ struct Data {
 - 在单核系统里，该宏定义是空的
 
 ### 伪共享的疑问
-既然多CPU多核并发读写一个Cache Line里的内存数据，会出现伪共享，那么我们对`atomic<size_t> shm_offset`的fetch_add()操作也满足这个条件，多个线程同时对shm_offset变量读写，那为什么性能不会很差呢？
+既然多CPU多核并发读写一个Cache Line里的内存数据，会出现伪共享，那么，我们对`atomic<size_t> shm_offset`的fetch_add()操作也满足这个条件，多个线程并发读写一个原子变量，为什么性能不会很差呢？
 
-我们反汇编发现`atomic.fetch_add`会被翻译成`lock; xadd %rax (%rdx)`，lock是一个指令前缀，需要配合其他指令使用，bus lock做的事情就是锁住总线，然后执行后面的xadd，在此期间，别的线程都不能访问内存数据。
+我们反汇编发现`atomic.fetch_add`会被翻译成`lock; xadd %rax (%rdx)`，lock是一个指令前缀，配合其他指令使用。
 
-实际上，锁总线的操作比较重，CPU会根据情况自行决定到底是锁缓存，还是assert LOCK signal。
+执行lock指令，Intel CPU会根据情况自行决定到底是assert LOCK# signal（锁总线），还是锁缓存。
 
-如果访问的内存区域已经缓存在处理器的缓存行中，Intel的现代处理器则不会assert LOCK#信号，它会对CPU的缓存中的缓存行进行锁定，在锁定期间，其它CPU不能同时缓存此数据，在修改之后，通过缓存一致性协议来保证修改的原子性，这个操作被称为“缓存锁”，所以，应该是这缓存锁的缘故，atomic的fetch_add性能才不会很差。
+对于早期的CPU（P6前），lock就是锁总线（bus lock），某个核心遇到lock指令，就触发总线的“LOCK#”那跟线，仲裁器干活，选择一个核心独占总线，其他核心不能再通过总线与内存通讯（不能访问任何内存数据），从而达到原子性的访问内存的目的。
+
+锁总线的操作比较重，相当于全局的内存总线锁，lock前缀之后的指令操作直接作用于内存，bypass掉缓存，lock也相当于内存屏障。
+
+Intel P6 CPU开始，优化了lock指令，通过ringbus + MESI协议做了缓存锁，如果访问的内存区域已经缓存在处理器的缓存行中，则不会assert LOCK#信号，它会对CPU的缓存中的缓存行进行锁定，在锁定期间，其它CPU不能同时缓存此数据，在修改之后，通过缓存一致性协议来保证修改的原子性，这个操作被称为“缓存锁”。
+
+false sharing对应的是多线程同时读写一个Cache Line的多个数据，Core-A修改数据x后，会置Cache Line为Invalid，Core-B读该缓存行的另一个数据y，需要Core-A把Cache Line Store到内存，Core-B再从内存里Load对应Cache Line，数据要过内存。
+
+而atomic，多个线程修改的是同一个变量，对应汇编会带lock指令前缀，而这个lock前缀，会提醒CPU优先采用缓存锁方式处理。
+
+所有核心通过RingBus连接成一个环，如果一份内存数据被多个Core加载到Cache，则状态为Shared（S）；一旦一个核心修改了某个Cache Line数据，则状态变成Modify（M），其他核心就能通过RingBus迅速感知到这个修改，从而把自己的Cache Line置为Invalid（I），并且从标记为M的Cache中把数据读过来，完成数据不过内存的核间传播。
+
+因为atomic在Cache Line里的最新值通过RingBus传递给其他核心，不需要频繁的内存Store/Load，所以性能不会那么糟。
 
 ## 相关概念
 ### 线程安全与可重入
