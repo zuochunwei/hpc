@@ -539,19 +539,25 @@ ABA问题 ：CAS经常伴随ABA问题，考虑前面的CAS逻辑，CAS里会做�
 ABA问题很多时候由内存复用引起，比如一个指针被回收后又被分配，地址值不变，但这个对象已经不是之前的那个对象了，有很多解决ABA问题的技术手段，比如增加版本号等等，目的无非是去识别这种变化。
 
 ### wait-free
-wiki关于wait-free的解释
+wiki关于wait-free的词条解释：
 > Wait-freedom is the strongest non-blocking guarantee of progress, combining guaranteed system-wide throughput with starvation-freedom. An algorithm is wait-free if every operation has a bound on the number of steps the algorithm will take before the operation completes.[15] This property is critical for real-time systems and is always nice to have as long as the performance cost is not too high.
 
 翻译过来就是：wait-free有着最强的非阻塞进度保证，wait-free有系统级吞吐兼具无饥饿特征，如果一个算法的每个操作完成都只有有限操作步数，那么这个算法就是wait-free的，这个特征对于实时系统非常关键，且它的性能成本不会太高。
 
-wait-free是lock-free更严格，所有wait-free算法都是lock-free的，反之不成立。
+wait-free比lock-free更严格，所有wait-free算法都是lock-free的，反之不成立，wait-free是lock-free的子集。
 
-wait-free的关键特征是所有步骤都在有限步骤完成，所以前面的cas + loop实现的lock-free栈就不是wait-free的，因为理论上，如果调用push的线程是个倒霉蛋，一直有其他线程push且恰好又都成功了，则这个倒霉蛋线程的cas失败，一直循环下去，wait-free的尝试次数通常跟线程数有关，线程数越多，则这个有限的上限就越大。
+wait-free的关键特征是所有步骤都在有限步骤完成，所以前面的`cas + loop`实现的lock-free栈就不是wait-free的。因为理论上，如果调用push的线程是个倒霉蛋，一直有其他线程push且恰好又都成功了，则这个倒霉蛋线程的cas会一直失败，一直循环下去，这与wait-free每个操作都必须在有限步骤完成的要求相冲突。wait-free的尝试次数通常跟线程数有关，线程数越多，则这个有限的上限就越大。
 
 但前面讲的atomic fetch_add则是wait-free的，因为它不会失败。
 
-wait-free非常难做，以前一直看不到wait-free数据结构和算法，直到2011才有人搞出了一个wait-free队列，虽然这个队列也用到了cas，但是它为每一步发送的操作提供了一个state array，为每个操作赋予一个number，从而保证有限步完成入队出队操作。
-(wait-free queue)[http://www.cs.technion.ac.il/~erez/Papers/wfquque-ppopp.pdf]
+wait-free非常难做，以前一直看不到wait-free的数据结构和算法实现，直到2011才有人搞出了一个wait-free队列，虽然这个队列也用到了cas，但是它为每一步发送的操作提供了一个state array，为每个操作赋予一个number，从而保证有限步完成入队出队操作，论文链接：(wait-free queue)[http://www.cs.technion.ac.il/~erez/Papers/wfquque-ppopp.pdf]
+
+## Obstruction-free
+Obstruction-free提供比lock-free提更弱的一个非阻塞进度保证，所有lock-free都属于Obstruction-free。
+
+Obstruction-free翻译过来叫无障碍，是指在任何时间点，一个孤立运行线程的每一个操作可以在有限步之内结束。只要没有竞争，线程就可以持续运行，一旦共享数据被修改，Obstruction-free要求中止已经完成的部分操作，并进行回滚，obstruction-free是并发级别更低的非阻塞并发，该算法在不出现冲突性操作的情况下提供单线程式的执行进度保证。
+
+obstruction-freedom要求可以中止任何部分完成的操作并且能够回滚已做的更改，为了内容完备性，把obstruction-free列在这里。
 
 ### 无阻塞数据结构
 Additionally, some non-blocking data structures are weak enough to be implemented without special atomic primitives. These exceptions include:
