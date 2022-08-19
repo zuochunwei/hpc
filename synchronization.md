@@ -337,6 +337,53 @@ int main() {
 
 比如语句`++count`对应到“读+修改+写”三个操作，但这3个操作不是一个原子操作，所以，多线程程序中使用`++count`，会交错执行，会导致计数错误（通常结果比预期数值小）。
 
+考虑另一个情况：读+判断，来我们看一下经典单件实现：
+```c++
+class Singleton {
+    static Singleton* instance;
+public:
+    static Singleton* get_instance() {
+        if (!instance) {
+            instance = new Singleton;
+        }
+        return instance;
+    }
+};
+```
+
+因为对instance的判断和`instance = new Singleton`不是原子的，所以，我们可以加锁：
+```c++
+class Singleton {
+    static Singleton* instance;
+    static std::mutex mutex;
+public:
+    static Singleton* get_instance() {
+        mutex.lock();
+        if (instance == nullptr)
+            instance = new Singleton;
+        mutex.unlock();
+        return instance;
+    }
+};
+```
+
+为了性能，我们会加双锁，代码变成下面这样：
+```c++
+static Singleton* get_instance() {
+    if (instance) {
+        return instance;
+    }
+
+    mutex.lock();
+    instance = new Singleton;
+    mutex.unlock();
+    return instance;
+}
+```
+但是，双锁真的安全吗？
+
+---
+
 所以，逻辑上，需要这几个操作是一个密不可分的整体，现代CPU通常都直接提供这类原子指令的支持，这类RMW原子指令通常包括：
 
 - test-and-set(TAS)，把1写入某个内存位置并返回旧值；如果原来内存位置是1，则返回1，否则原子的写入1并返回0；只能标识0和1两种情况
@@ -428,7 +475,7 @@ lock-free没有锁同步的问题，所有线程无阻碍的执行原子指令�
 
 翻译一下：
 第一段：lock-free允许单个线程饥饿但保证系统级吞吐。如果一个程序的线程执行足够长的时间，那么至少一个线程会往前推进，那么这个算法就是lock-free的。
-第二段：尤其是，如果一线线程被暂停，lock-free算法保证其他线程依然能够往前推进，因此，如果2个线程竞争同一个互斥锁或者自旋锁，那它就不是lock-free的（因为如果我们暂停持有锁的线程，那么另一个线程会被阻塞）。
+第二段：尤其是，如果一线线程被暂停，lock-free算法保证其他线程依然能够往前推进，因此，如果2个线程竞争同一个**互斥锁或者自旋锁**，那它就不是lock-free的（因为如果我们暂停持有锁的线程，那么另一个线程会被阻塞）。
 
 wiki的这段描述很抽象，它不够直观，稍微解释一下：
 lock-free描述的是代码逻辑的**属性**，不使用锁的代码，大部分具有这种属性，所以，我们经常会混淆这lock-free和无锁这2个概念，其实，lock-free是对代码（算法）性质的描述，是属性，而后者是说代码如何实现，是手段。
@@ -450,7 +497,7 @@ private:
 ```
 如果有线程A/B/C同时执行push方法，最先进入的线程A获得互斥锁，线程B和C因为获取不到互斥锁而陷入等待，这个时候，线程A如果因为某个原因（如出现异常，或者等待某个资源）而被永久挂起，那么同样执行push的线程B/C将被永久挂起，系统整体（system-wide）没法推进，这显然不符合lock-free的要求。
 
-因此，所有基于锁的并发实现，都不是lock-free的。
+因此：**所有基于锁的并发实现，都不是lock-free的**
 
 因为它们都会遇到同样的问题：即如果永久暂停当前占有锁的线程/进程的执行，将会阻塞其他线程/进程的执行。而对照lock-free的描述，它允许部分process（理解为执行流）饿死但必须保证整体逻辑的持续前进，基于锁的并发显然是违背lock-free要求的。
 
@@ -560,6 +607,8 @@ wait-free的关键特征是所有步骤都在有限步骤完成，所以前面�
 
 但前面讲的atomic fetch_add则是wait-free的，因为它不会失败。
 
+简单点说，lock-free可以有循环，而wait-free连循环都不应该有。
+
 wait-free非常难做，以前一直看不到wait-free的数据结构和算法实现，直到2011才有人搞出了一个wait-free队列，虽然这个队列也用到了cas，但是它为每一步发送的操作提供了一个state array，为每个操作赋予一个number，从而保证有限步完成入队出队操作，论文链接：(wait-free queue)[http://www.cs.technion.ac.il/~erez/Papers/wfquque-ppopp.pdf]
 
 ## Obstruction-free
@@ -586,6 +635,7 @@ Additionally, some non-blocking data structures are weak enough to be implemente
 - 自旋锁一般不应该被长时间持有，如果持有锁的时间可能比较长，那就用操作系统为你提供的粗粒度的锁就好了。
 - 自旋锁一般不应该持有锁的时候，线程一般不应该被调度走，内核层可以禁中断禁调度，但应用层程序一般无法避免线程被调度走，所以应用层使用自旋锁其实得不到保障。
 - 自旋锁不可递归。
+- 自旋锁常用来追求低延时，而不是为了提升系统吞吐，因为自旋锁，不会把执行线程调度走，不会阻塞（睡眠）
 
 ### 程序序（Program Order）
 对单线程程序而言，代码会一行行顺序执行，就像我们编写的程序的顺序那样。比如
