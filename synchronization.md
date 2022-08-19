@@ -170,9 +170,6 @@ bool sell(int num) {
 - 通过互斥锁对数据进行保护，需要开发者遵从约束，按某种规定的方式编写数据访问代码，这种约束是对程序员的隐式约束，它并非某种强制的限制。
 - 比如使用互斥量对数据x进行并发访问控制，假设有2处代码对该数据竞争访问，其中一处用互斥量做了保护，而另外一处，没有使用互斥锁加以保护，则代码依然能通过编译，程序依然能运行，只是结果上可能是错误，这个跟现实中没有钥匙开锁就不能得到（访问）权限是不一样的。
 
-### 自旋锁
-在cpu核上自旋，粘着cpu不停的测试，直到其他cpu解锁，这是一种消耗cpu的加锁方式，适合持有锁的时间非常短的情况，它基于一种假设，睡眠导致的调度开销大于在cpu上自旋测试的开销。
-
 ### 读写锁
 写排他，读并行，适合多读少写的场景，可以提升吞吐。
 
@@ -342,9 +339,9 @@ int main() {
 
 所以，逻辑上，需要这几个操作是一个密不可分的整体，现代CPU通常都直接提供这类原子指令的支持，这类RMW原子指令通常包括：
 
-- test-and-set(TAS)，把1写入某个内存位置并返回旧值；如果原来内存位置是1，则返回1，否则原子的写入1并返回0；这样的行为逻辑可用来实现spinlock（配合循环）
+- test-and-set(TAS)，把1写入某个内存位置并返回旧值；如果原来内存位置是1，则返回1，否则原子的写入1并返回0；只能标识0和1两种情况
 - fetch_and_add，增加某个内存位置的值，并返回旧值；可用来做atomic的后自增
-- compare-and-swap(CAS)，比较内存位置的值和指定的值，如果相等，则将新值写入内存位置，如果不等，什么也不做
+- compare-and-swap(CAS)，比较内存位置的值和指定的值，如果相等，则将新值写入内存位置，如果不等，什么也不做；比tas更强
 
 以上所有操作都是在一个内存位置执行多个动作，但这些操作都是原子单步的，它不会被中断，也不会穿插进其他操作，这个重要属性使得RMW指令非常适合用来实现无锁编程。
 
@@ -457,7 +454,7 @@ private:
 
 因为它们都会遇到同样的问题：即如果永久暂停当前占有锁的线程/进程的执行，将会阻塞其他线程/进程的执行。而对照lock-free的描述，它允许部分process（理解为执行流）饿死但必须保证整体逻辑的持续前进，基于锁的并发显然是违背lock-free要求的。
 
-#### 通过CAS实现lock-free
+#### CAS loop实现lock-free
 Lock-Free同步主要依靠CPU提供的read-modify-write原语，著名的“比较和交换”CAS（Compare And Swap）在X86机器上是通过cmpxchg系列指令实现的原子操作，CAS逻辑上用代码表达是这样的：
 
 ```c++
@@ -485,9 +482,22 @@ do {
     T expect_value = *ptr;
 } while (!CAS(ptr, expect_value, new_value));
 ```
-在调用CAS之前，需要准备好expect_value，而expect_value从ptr指针指向的内存地址里load，虽然CAS是原子的，但加载expect_value跟CAS这2个步骤，并不是原子的。
+1. 创建共享数据的本地副本，expect_value
+2. 根据需要修改本地副本，从ptr指向的共享数据里load后赋值给expect_value
+3. 检查共享的数据跟本地副本是否相等，如果相等，则把新值复制到共享数据
+
+第三步是关键，虽然CAS是原子的，但加载expect_value跟CAS这2个步骤，并不是原子的。
 
 所以，我们需要借助循环，如果ptr内存位置的值没有变（*ptr == expect_value），那就存入新值返回成功；否则说明加载expect_value后，ptr指向的内存位置被其他线程修改了，这时候就返回失败，重新加载expect_value，重试，直到成功为止。
+
+CAS loop支持多线程并发写，这个特点太有用了，因为多线程同步，很多时候都面临多写的问题，我们可以基于cas实现Fetch-and-add(FAA)算法，它看起来像这样：
+```c++
+T faa(T& t) {
+    T temp = t;
+    while (!compare_and_swap(x, temp, temp + 1));
+}
+```
+第一步加载共享数据的值到temp，第二步比较+存入新值，直到成功。
 
 **lock-free栈**
 下面是C++ atomic compare_exchange_weak()实现的一个lock-free堆栈（来自CppReference）
@@ -559,16 +569,23 @@ Obstruction-free翻译过来叫无障碍，是指在任何时间点，一个孤�
 
 obstruction-freedom要求可以中止任何部分完成的操作并且能够回滚已做的更改，为了内容完备性，把obstruction-free列在这里。
 
-### 无阻塞数据结构
+### 无锁数据结构
 Additionally, some non-blocking data structures are weak enough to be implemented without special atomic primitives. These exceptions include:
 
-a single-reader single-writer ring buffer FIFO, with a size which evenly divides the overflow of one of the available unsigned integer types, can unconditionally be implemented safely using only a memory barrier
+一些无锁（阻塞）数据结构不需要特殊原子操作原语即可实现，例如：
+- 支持单线程读和单线程写的Ring Buffer先进先出队列，通过把容量设置为2^n，利用整型回绕特点+内存屏障就可以实现，参考linux内核的kfifo
+- 带单写线程和任意数读线程的读拷贝更新（RCU），通常，读无等待（wait-free），写无锁（lock-free）
+- 带多写线程和任意数读线程的读拷贝更新（RCU），通常，读无等待（wait-free），写用锁做串行化
 
-Read-copy-update with a single writer and any number of readers. (The readers are wait-free; the writer is usually lock-free, until it needs to reclaim memory).
+无锁数据结构实现起来比较困难，非必要不要自己去实现。
 
-Read-copy-update with multiple writers and any number of readers. (The readers are wait-free; multiple writers generally serialize with a lock and are not obstruction-free).
+### 自旋锁
+在cpu核上自旋，粘着cpu不停的测试，直到其他cpu解锁，这是一种消耗cpu的加锁方式，适合持有锁的时间非常短的情况，它基于一种假设，睡眠导致的调度开销大于在cpu上自旋测试的开销。
 
-Several libraries internally use lock-free techniques,[7][8][9] but it is difficult to write lock-free code that is correct.[10][1
+- 自旋锁也叫优雅粒度的锁，跟操作系统提供的阻塞机制的粗粒度锁（mutex和信号量）对应。
+- 自旋锁一般不应该被长时间持有，如果持有锁的时间可能比较长，那就用操作系统为你提供的粗粒度的锁就好了。
+- 自旋锁一般不应该持有锁的时候，线程一般不应该被调度走，内核层可以禁中断禁调度，但应用层程序一般无法避免线程被调度走，所以应用层使用自旋锁其实得不到保障。
+- 自旋锁不可递归。
 
 ### 程序序（Program Order）
 对单线程程序而言，代码会一行行顺序执行，就像我们编写的程序的顺序那样。比如
