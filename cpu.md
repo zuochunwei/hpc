@@ -269,11 +269,77 @@ int sum_positive_scalar(const int * src, size_t count)
   }
 ```
 
-* BloomFilter的SIMD实现
+### BloomFilter的SIMD实现
 
+*Bloom Filter*是由Bloom在1970年提出的一种空间效率高的概率型数据结构。它可以用来查找某一个元素是否存在于集合中。BloomFilter有多种变种，我们要介绍的是Block BloomFilter，由Cache-, Hash- and Space-Efficient Bloom Filters论文首次提出。BloomFilter初始化时是一个bit位组成的集合，集合中所有的bit位均置为0。BloomFilter的最重要的两个函数即为Add函数和Find函数。通过Add函数可以将一个元素通过hash函数计算后映射到集合中的某一个bit位置为1。一般需要经过多次hash函数计算。Find函数则通过将元素通过多次hash计算后比较集合中对应的bit位是否都为1，如果不全为1，则该元素一定不存在，反之，则可能存在。
 
+下面是BlockBloomFilter的非SIMD版本实现。我们主要关注其中的算术运算。
 
+```
+void BlockBloomFilter::BucketInsert(const uint32_t bucket_idx, const uint32_t hash) noexcept {
+  // new_bucket will be all zeros except for eight 1-bits, one in each 32-bit word. It is
+  // 16-byte aligned so it can be read as a __m128i using aligned SIMD loads in the second
+  // part of this method.
+  uint32_t new_bucket[kBucketWords] __attribute__((aligned(16)));
+  for (int i = 0; i < kBucketWords; ++i) {
+    // Rehash 'hash' and use the top kLogBucketWordBits bits, following Dietzfelbinger.
+    new_bucket[i] = (kRehash[i] * hash) >> ((1 << kLogBucketWordBits) - kLogBucketWordBits);
+    new_bucket[i] = 1U << new_bucket[i];
+  }
+  for (int i = 0; i < 2; ++i) {
+    __m128i new_bucket_sse = _mm_load_si128(reinterpret_cast<__m128i*>(new_bucket + 4 * i));
+    __m128i* existing_bucket = reinterpret_cast<__m128i*>(
+        &DCHECK_NOTNULL(directory_)[bucket_idx][4 * i]);
+    *existing_bucket = _mm_or_si128(*existing_bucket, new_bucket_sse);
+  }
+}
 
+bool BlockBloomFilter::BucketFind(
+    const uint32_t bucket_idx, const uint32_t hash) const noexcept {
+  for (int i = 0; i < kBucketWords; ++i) {
+    BucketWord hval = (kRehash[i] * hash) >> ((1 << kLogBucketWordBits) - kLogBucketWordBits);
+    hval = 1U << hval;
+    if (!(DCHECK_NOTNULL(directory_)[bucket_idx][i] & hval)) {
+      return false;
+    }
+  }
+  return true;
+}
+```
+
+非SIMD实现中的kBucketWords为8，kLogBucketWordBits为5，可以看出在for循环内部需要计算一些乘法以及移位运算，在判断元素是否存在时需要与运算，这样的计算非常适合使用SIMD来加速。比如对于Add函数和Find函数中的`(kRehash[i] * hash) >> ((1 << kLogBucketWordBits) - kLogBucketWordBits)`计算可以使用SIMD来加速。kRehash实际上是一个静态数组，我们通过`_mm256_setr_epi32`的指令存储在YMM寄存器中。通过`_mm256_set1_epi32`将hash值复制8次并存储在另一个YMM寄存器中。`(kRehash[i] * hash)`的乘法运算通过`_mm256_mullo_epi32`计算一次得到8个乘法的结果，`_mm256_mullo_epi32`表示乘法计算后只保留低32位结果。这是因为两个32位整型相乘会得到一个64位整型。但实际上我们只需要低32位结果。之后是`_mm256_srli_epi32(hash_data, 27)`右移27位。即完成上面的复杂表达式的计算。同时`hval = 1U << hval;`计算也可以通过`_mm256_sllv_epi32`SIMD右移指令实现。这样对于原来的for循环，我们可以使用SIMD指令进行并行计算加速。
+
+对于Add函数，对集合中计算的bit位置为1，可以通过或运算实现，在SIMD intrinsic中通过`_mm256_or_si256`来实现两个YMM计算器的或运算。对于Find函数，通过比较集合中对应的bit位是否全为1来判断该元素是否存在，在SIMD intrinsic中使用`int _mm256_testc_si256 (__m256i a, __m256i b)`来实现，该指令表示如果两个256bits向量中先对a进行NOT运算，然后与b进行AND运算，如果结果为0，则返回CF标记位为1，否则返回CF标记位为0。假设集合a中某一元素为0，NOT计算得到1，如果b中对应的元素为1，则结果一定不为0，表示a中的bit位没有被标记过，但b中的元素是被标记过的，所以b一定不存在a中，所以返回CF标记位为0。通过以上的SIMD intrinsic计算即可完成BloomFilter的SIMD实现。通过SIMD加速Block BloomFilter计算，性能相比非SIMD版本提升数倍。
+
+```
+static inline __attribute__((__target__("avx2"))) __m256i MakeMask(
+    const uint32_t hash) {
+  const __m256i ones = _mm256_set1_epi32(1);
+  const __m256i rehash = _mm256_setr_epi32(BLOOM_HASH_CONSTANTS);
+  __m256i hash_data = _mm256_set1_epi32(hash);
+  hash_data = _mm256_mullo_epi32(rehash, hash_data);
+  hash_data = _mm256_srli_epi32(hash_data, 27);
+  return _mm256_sllv_epi32(ones, hash_data);
+}
+
+void BlockBloomFilter::BucketInsertAVX2(const uint32_t bucket_idx, const uint32_t hash) noexcept {
+  const __m256i mask = MakeMask(hash);
+  __m256i* const bucket = &(reinterpret_cast<__m256i*>(directory_)[bucket_idx]);
+  _mm256_store_si256(bucket, _mm256_or_si256(*bucket, mask));
+  // For SSE compatibility, unset the high bits of each YMM register so SSE instructions
+  // dont have to save them off before using XMM registers.
+  _mm256_zeroupper();
+}
+
+bool BlockBloomFilter::BucketFindAVX2(const uint32_t bucket_idx, const uint32_t hash) const
+    noexcept {
+  const __m256i mask = MakeMask(hash);
+  const __m256i bucket = reinterpret_cast<__m256i*>(directory_)[bucket_idx];
+  const bool result = _mm256_testc_si256(bucket, mask);
+  _mm256_zeroupper();
+  return result;
+}
+```
 
 ### Out-of-Order Execution
 
