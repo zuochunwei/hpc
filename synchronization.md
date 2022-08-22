@@ -798,17 +798,19 @@ void y() {
 ```
 
 假设a和b都被初始化为0；CPU0执行x()函数，CPU1执行y()函数；变量a在CPU1的local Cache里，变量b在CPU0的local Cache里。
-    - CPU0执行`a = 1;`的时候，因为a不在CPU0的local cache，CPU0会把a的新值1写入Store Buffer里，并发送Read Invalidate消息给其他CPU
-    - CPU1执行`while (b);`,因为b不在CPU1的local cache里，CPU1会发送Read Invalidate消息去其他CPU获取b的值
-    - CPU0执行`b = 2;`，因为b在CPU0的local Cache，所以直接更新local cache中b的副本
-    - CPU0收到CPU1发来的读b请求，把b的新值（2）发送给CPU1；同时存放b的Cache Line的状态被设置为Shared，以反应b同时被CPU0和CPU1 cache住的事实
-    - CPU1收到b的新值（2）后结束循环，继续执行`assert(a == 1);`，因为此时local Cache中的a值为0，所以断言失败
-    - CPU1收到CPU0发来的Read Invalidate后，更新a的值为1，但为时已晚，程序在上一步已经崩了
+
+- CPU0执行`a = 1;`的时候，因为a不在CPU0的local cache，CPU0会把a的新值1写入Store Buffer里，并发送Read Invalidate消息给其他CPU
+- CPU1执行`while (b);`,因为b不在CPU1的local cache里，CPU1会发送Read Invalidate消息去其他CPU获取b的值
+- CPU0执行`b = 2;`，因为b在CPU0的local Cache，所以直接更新local cache中b的副本
+- CPU0收到CPU1发来的读b请求，把b的新值（2）发送给CPU1；同时存放b的Cache Line的状态被设置为Shared，以反应b同时被CPU0和CPU1 cache住的事实
+- CPU1收到b的新值（2）后结束循环，继续执行`assert(a == 1);`，因为此时local Cache中的a值为0，所以断言失败
+- CPU1收到CPU0发来的Read Invalidate后，更新a的值为1，但为时已晚，程序在上一步已经崩了
 
 怎么办？答案留到内存屏障一节揭晓。
 
 ### Invalidate Queue
 **为什么需要Invalidate Queue**
+
 当一个变量加载到多个core的Cache，则这个CacheLine处于Shared状态，如果Core1要修改这个变量，则需要通过发送核间消息Invalidate来通知其他Core把对应的Cache Line置为Invalid，当其他Core都Invalid这个CacheLine后，则本Core获得该变量的独占权，这个时候就可以修改它了。
 
 收到Invalidate消息的core需要回Invalidate ACK，一个个core都这样ACK，等所有core都回复完，Core1才能修改它，这样CPU就白白浪费。
@@ -850,6 +852,7 @@ d = 4;
 wmb()保证`a = 1; b = 2;`发生在`c = 3; d = 4;`之前，不保证`a = 1`和`b = 2`的内存序，也不保证`c = 3`和`d = 4`的内部序。
 
 **Invalidate Queue的引入的问题**
+
 就像引入Store Buffer会影响Store的内存一致性，Invalidate Queue的引入会影响Load的内存一致性：
 
 因为Invalidate queue会缓存其他核发过来的消息，比如Invalidate某个数据的消息被delay处置，导致core在Cache Line中命中这个数据，而这个Cache Line本应该被Invalidate消息标记无效。
