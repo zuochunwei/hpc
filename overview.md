@@ -22,6 +22,7 @@
 
 # 数据结构和算法
 - hash / 一致性hash / linear hashing
+- bloom filter
 - roaring bitmap
 - hll
 - skiplist

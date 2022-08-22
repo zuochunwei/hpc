@@ -246,11 +246,21 @@ lock_guard是互斥量的一个RAII包装类，unique_lock除了会在析构函�
 Posix条件变量的编程接口跟C++的类似，概念上是一致的。
 
 ### 原子操作
-原子，意味着不可切分的最小单元。程序中的原子操作指任务不可切分到更小的步骤，从线程视角只能观察到**未做**和**已做**两种状态，观察不到完成一半的状态，任务执行不会被中断，也不会穿插进其他操作。
+原子，意味着不可切分的最小单元，程序中的原子操作指任务不可切分到更小的步骤。
 
-注意：我们说的是从线程视角观察不到完成一半的状态，而不是不存在物理上的进度状态，它取决于你的观察视角。
+原子性（atomic）是一个可见性的概念：
 
-原子性对多线程操作是一个非常重要的属性，因为它不可切分，所以，一个线程没法在另一个线程执行原子操作的时候穿插进去。比如一个线程原子的写入共享数据，那么其他线程没有办法读到“半修改的数据”，同样，如果一个线程原子读取共享数据，那么它读取的是共享变量在那个瞬间的值，因此原子的读和写没有数据竞争（Data Race）。
+当我们称一个操作是atomic的，实际上隐含了一个对什么atomic的上下文。
+
+注意：我们说的是从线程视角观察不到完成一半的状态，而并非不存在物理上的进度状态，它取决于你的观察视角。
+
+比如说一个线程中被互斥锁保护的区域，对另一个线程是atomic的，因为从另一个线程视角来看，它没法进入临界区读到数据中间状态，但是对kernel而言却不是atomic的。
+
+从线程视角只能观察到未做和已做两种状态，观察不到完成一半的状态，任务执行不会被中断，也不会穿插进其他操作。
+
+原子性对多线程操作是一个非常重要的属性，因为它不可切分，所以，一个线程没法在另一个线程执行原子操作的时候穿插进去。
+
+比如一个线程原子的写入共享数据，那么其他线程没有办法读到“半修改的数据”；同样，如果一个线程原子读取共享数据，那么它读取的是共享变量在那个瞬间的值，因此原子的读和写没有数据竞争（Data Race）。
 
 原子操作常用于与顺序无关的场景。
 
@@ -261,17 +271,21 @@ Posix条件变量的编程接口跟C++的类似，概念上是一致的。
 1. store/load
 2. read-modify-write(RMW)
 
-**Store/Load指令**
-1. Store：存储数据到内存，对应变量写（赋值）
-2. Load：从内存加载数据，对应变量读
+Store/Load指令
+1. store：存储数据到内存，对应变量写（赋值）
+2. load：从内存加载数据，对应变量读
 
-通常，一条简单的store/load机器指令是原子的，比如数据复制指令（mov）可以把内存位置的数据读取到CPU寄存器，这相当于Load数据。
+通常，一条简单的store/load机器指令是原子的，比如数据复制指令（mov）可以把内存位置的数据读取到CPU寄存器，相当于Load数据。
 
-x86架构读/写按数据类型对齐要求对齐的长度不大于机器字长的数据是原子的，满足数据类型对齐要求能确保数据放置在一个Cache Line，而跨Cache Line的数据访问无法保证原子性。
+x86架构读/写“按数据类型对齐要求对齐的长度不大于机器字长的数据”是原子的。
 
 那什么是数据类型对齐要求呢？
 
-比如在x86_64架构LLP64系统上（LLP64指long、long long和pointer类型是64位的），只要int类型数据满足放置在起始地址除4为0，long类型数据满足起始地址除8位0，则该数据就是满足类型对齐要求，那么对它的读和写，都是原子的。
+比如在x86_64架构LLP64系统上（LLP64指long、long long和pointer类型是64位的），只要int32类型数据满足放置在起始地址除4为0，int64/long类型数据满足起始地址除8为0，则该数据就是满足类型对齐要求，那么对它的读和写，都是原子的。
+
+一字节的数据读写一定是原子的。
+
+其实，Intel新CPU架构确保读写放置在一个Cache Line的数据（不大于机器字长），跨Cache Line的数据访问无法保证原子性。
 
 C/C++编程中，变量和结构体会自动满足对齐要求，比如：
 ```c++
@@ -288,13 +302,16 @@ struct Foo {
 } foo;
 ```
 
-全局变量i会被放置在起始地址可以被4整除的内存位置，局部变量l会被放置在起始地址可以被8整除的内存位置，而结构体内的x成员会被放置在起始地址可以被4整除的内存位置，为了把ptr安置在起始地址可以被8整除的内存位置，会在s后加入填充，从而使得ptr也满足对齐要求。
+全局变量i会被放置在起始地址可以被4整除的内存位置，局部变量y会被放置在起始地址可以被8整除的内存位置，而结构体内的x成员会被放置在起始地址可以被4整除的内存位置。
+
+为了把ptr安置在起始地址可以被8整除的内存位置，编译器会在s后加入填充，从而使得ptr也满足对齐要求。
 
 通过C malloc()接口动态分配的内存，其返回值一般也会对齐到8/16字节，如果有更高的内存对齐要求，可以通过aligned_alloc(alignment, size)接口。C++中的alignas关键字用于设置结构或变量的对齐要求。
 
 对一个满足对齐要求的不大于机器字长的类型变量赋值是原子的，不会出现半完成（即只完成一半字节的赋值），读的情况亦如此。
 
 注意：对长度大于机器字长的数据读写，是不符合原子操作特征的，比如在x86_64系统上，对下面结构体变量的读写都是非原子的:
+
 ```c++
 struct Foo {
     int a;
@@ -330,12 +347,14 @@ int main() {
     f->set(3.14); // dangerous
 }
 ```
-但是，如果你把一块buf，强转成Foo，然后调用它的getter/setter，则是危险的，因为这样做，有可能破坏前述的对齐要求。
+但是，如果你把一块buf，强转成Foo，然后调用它的getter/setter，则是危险的，有可能破坏前述的对齐要求。
+
+如果你把一个int变量编码进一个buf，则最好使用memcpy，而不是强转+赋值。
 
 **Read-Modify-Write指令**
 但有时候，我们需要更复杂的操作指令，而不仅仅是单独的读或写，它需要把几个动作组合在一起完成某项任务。
 
-比如语句`++count`对应到“读+修改+写”三个操作，但这3个操作不是一个原子操作，所以，多线程程序中使用`++count`，会交错执行，会导致计数错误（通常结果比预期数值小）。
+比如语句`++count`对应到“读+修改+写”三个操作，但这3个操作不是一个原子操作。所以，多线程程序中使用`++count`，多个执行流会交错执行，会导致计数错误（通常结果比预期数值小）。
 
 考虑另一个情况：读+判断，来我们看一下经典单件实现：
 ```c++
@@ -343,7 +362,7 @@ class Singleton {
     static Singleton* instance;
 public:
     static Singleton* get_instance() {
-        if (!instance) {
+        if (instance == nullptr) {
             instance = new Singleton;
         }
         return instance;
@@ -351,41 +370,51 @@ public:
 };
 ```
 
-因为对instance的判断和`instance = new Singleton`不是原子的，所以，我们可以加锁：
+因为对instance的判断和`instance = new Singleton`不是原子的，所以，我们需要加锁：
 ```c++
 class Singleton {
-    static Singleton* instance;
-    static std::mutex mutex;
+   static Singleton* instance;
+   static std::mutex mutex;
 public:
-    static Singleton* get_instance() {
-        mutex.lock();
-        if (instance == nullptr)
-            instance = new Singleton;
-        mutex.unlock();
-        return instance;
-    }
+   static Singleton* get_instance() {
+       mutex.lock();
+       if (instance == nullptr)
+           instance = new Singleton;
+       mutex.unlock();
+       return instance;
+   }
 };
 ```
 
-为了性能，我们会加双锁，代码变成下面这样：
+但为了性能，更好的方案是加双检，代码变成下面这样：
 ```c++
-static Singleton* get_instance() {
-    if (instance) {
-        return instance;
-    }
 
-    mutex.lock();
-    instance = new Singleton;
-    mutex.unlock();
-    return instance;
+static Singleton* get_instance() {
+   if (instance == nullptr) {
+       mutex.lock();
+       if (instance == nullptr) { // 双检
+           instance = new Singleton;
+       }
+       mutex.unlock();
+   }
+   return instance;
 }
 ```
-但是，双锁真的安全吗？
+
+第一个检查，如果instance不为空，那么直接返回instance，大多数时候命中这个情况，因为instance一旦被创建，就不再为空。
+
+如果instance为空，那么再加锁、然后第二次检查instance是否为空，为什么要双检呢？因为前面的检查通过后，有可能其他线程创建了实例，导致instance不再为空。
+
+看起来一切都挺好的，高效又缜密。
+
+但双检真的安全吗？这其实是一个非常经典的问题。它有2个风险：
+
+1. 首先，编写者没有告诉编译器，必须假设instance可能被其他线程修改，所以，编译器可能认为2个if保留一个就可以了，当然，它也可能不做这个优化，取决于编译器的策略，因此，instance必须改为volatile，告诉编译器，两次读都必须从内存里加载，避免双检被优化掉。
+2. 就是前面讲的原子性，instance指针不能保证一定在8字节对齐的地方保存，所以，需要用std::atomic<Singleton*>代替。
 
 ---
 
-所以，逻辑上，需要这几个操作是一个密不可分的整体，现代CPU通常都直接提供这类原子指令的支持，这类RMW原子指令通常包括：
-
+逻辑上，需要几个操作是一个密不可分的整体，现代CPU通常都直接提供这类原子指令的支持，这类RMW原子指令通常包括：
 - test-and-set(TAS)，把1写入某个内存位置并返回旧值；如果原来内存位置是1，则返回1，否则原子的写入1并返回0；只能标识0和1两种情况
 - fetch_and_add，增加某个内存位置的值，并返回旧值；可用来做atomic的后自增
 - compare-and-swap(CAS)，比较内存位置的值和指定的值，如果相等，则将新值写入内存位置，如果不等，什么也不做；比tas更强
@@ -398,7 +427,7 @@ static Singleton* get_instance() {
 前面讲的原子指令是硬件层面，不同架构甚至不同型号CPU有不同的原子指令，它是CPU层面的东西，跨平台特性差，用它编写的代码不可移植，所以应该尽量避免直接使用原子指令。
 
 回到软件层面，软件层面的原子操作包括三个层次：
-- 操作系统封装，linux操作系统提供atomic这种原子类型，配合相关的编程接口使用，大多数它只是对原子指令的简单封装，但它屏蔽了硬件差异，比原子指令更易用
+- 操作系统层面，linux操作系统提供atomic这种原子类型，配合相关的编程接口使用，大多数它只是对原子指令的简单封装，但它屏蔽了硬件差异，比原子指令更易用
     ```c
     atomic_read(atomic_t *v)
     atomic_set(atomic_t *v, int i)
@@ -410,7 +439,7 @@ static Singleton* get_instance() {
     atomic_dec_and_test(atomic_t *v);
     atomic_sub_and_test(int i, atomic_t *v)
     ```
--  编译器层面，gcc提供原子操作build-in函数，使用gcc编译c/c++代码，可以直接使用它们
+- 编译器层面，gcc提供原子操作build-in函数，使用gcc编译c/c++代码，可以直接使用它们
     ```c
     //其中type对应8/16/32/64位整数
     type __sync_fetch_and_add (type *ptr, type value, ...)
@@ -442,20 +471,26 @@ static Singleton* get_instance() {
     type __atomic_fetch_or(type *ptr, type val, int memorder)
     type __atomic_fetch_nand(type *ptr, type val, int memorder)
     ```
-- 在编程语言层面，也通常提供原子操作类型和接口，这也是使用原子操作的推荐方式，它有良好的跨平台性和可移植性，程序员应优先使用它们
-    - c11新增了原子操作库，通过stdatomic.h头文件提供atomic_fetch_add/atomic_compare_exchange_weak等接口。
+- 编程语言层面，也通常提供原子操作类型和接口，这也是使用原子操作的推荐方式，它有良好的跨平台性和可移植性，程序员应优先使用它们：
+    - C11新增了原子操作库，通过stdatomic.h头文件提供atomic_fetch_add/atomic_compare_exchange_weak等接口。
     - C++11也新增了原子操作库，提供一种类型为std::atomic<T>的类模板，它提供++/--/+=/-=/fetch_sub/fetch_add等原子操作接口。
 
-原子操作常用于与顺序无关的场景，比如计数错误的场景，用原子变量改写后，则会输出符合预期的count=10000。
+原子操作常用于与顺序无关的场景，比如计数错误的场景，用原子变量改写后，则会输出符合预期的值。
 
-原子操作是编写Lock-free多线程程序的基础，原子操作只保证原子性，不保证操作顺序。在Lock-free多线程程序中，光有原子操作是不够的，需要将原子操作和Memory Barrier结合起来，才能实现免锁。
+原子操作是编写Lock-free多线程程序的基础，原子操作只保证原子性，不保证操作顺序。
+
+在Lock-free多线程程序中，光有原子操作是不够的，需要将原子操作和Memory Barrier结合起来，才能实现免锁。
 
 ### 锁同步的问题
 锁是操作系统提供的一种同步原语，通过在访问共享资源前加锁，结束访问共享资源后解锁，让任何时刻只有一个线程访问共享，本质是做串行化。
 
 程序对共享资源的访问任务，一般包括三步骤，读原值，修改值，将新值写回，用锁同步的话，就是在确保这3个步骤，不会被打断，访问共享资源的临近代码区只有一个线程在同时运行，第一个获得锁的线程能往前推进，其他线程只能等着直到持有锁的线程释放锁。
 
-线程同步分为阻塞型同步和非阻塞型同步，互斥量、信号、条件变量这些系统提供的机制都属于阻塞型同步，在争用资源的时候，会导致调用线程阻塞，而非阻塞型同步是在无锁的情况下，通过某种算法和技术手段实现不用阻塞而同步。
+线程同步分为阻塞型同步和非阻塞型同步。
+
+互斥量、信号、条件变量这些系统提供的机制都属于阻塞型同步，在争用资源的时候，会导致调用线程阻塞。
+
+而非阻塞型同步是在无锁的情况下，通过某种算法和技术手段实现不用阻塞而同步。
 
 锁是阻塞（Blocking）同步机制，阻塞同步机制的缺陷是可能挂起你的程序，如果持有锁的线程crash，则锁永远得不到释放，而其他线程则将陷入无限等待，另外，它也可能导致优先级倒转等问题。
 
@@ -466,7 +501,9 @@ lock-free没有锁同步的问题，所有线程无阻碍的执行原子指令�
 
 比如一个线程读atomic类型变量，一个线程写atomic变量，它们没有任何等待，硬件原子指令确保不会出现数据不一致，写入数据不会出现半完成，读取数据也不会读一半。
 
-那到底什么是lock-free？有人说lock-free就是不使用mutex / semaphores之类的无锁（lock-Less）编程，这句话严格来说并不对。
+那到底什么是lock-free？
+
+有人说lock-free就是不使用mutex / semaphores之类的无锁（lock-Less）编程，这句话严格来说并不对。
 
 我们先看一下wiki对Lock-free的描述:
 > Lock-freedom allows individual threads to starve but guarantees system-wide throughput. An algorithm is lock-free if, when the program threads are run for a sufficiently long time, at least one of the threads makes progress (for some sensible definition of progress). All wait-free algorithms are lock-free.
@@ -474,13 +511,24 @@ lock-free没有锁同步的问题，所有线程无阻碍的执行原子指令�
 > In particular, if one thread is suspended, then a lock-free algorithm guarantees that the remaining threads can still make progress. Hence, if two threads can contend for the same mutex lock or spinlock, then the algorithm is not lock-free. (If we suspend one thread that holds the lock, then the second thread will block.)
 
 翻译一下：
-第一段：lock-free允许单个线程饥饿但保证系统级吞吐。如果一个程序的线程执行足够长的时间，那么至少一个线程会往前推进，那么这个算法就是lock-free的。
-第二段：尤其是，如果一线线程被暂停，lock-free算法保证其他线程依然能够往前推进，因此，如果2个线程竞争同一个**互斥锁或者自旋锁**，那它就不是lock-free的（因为如果我们暂停持有锁的线程，那么另一个线程会被阻塞）。
+- 第一段：lock-free允许单个线程饥饿但保证系统级吞吐。如果一个程序的线程执行足够长的时间，那么至少一个线程会往前推进，那么这个算法就是lock-free的。​​​
+- 第二段：尤其是，如果一个线程被暂停，lock-free算法保证其他线程依然能够往前推进。
 
-wiki的这段描述很抽象，它不够直观，稍微解释一下：
-lock-free描述的是代码逻辑的**属性**，不使用锁的代码，大部分具有这种属性，所以，我们经常会混淆这lock-free和无锁这2个概念，其实，lock-free是对代码（算法）性质的描述，是属性，而后者是说代码如何实现，是手段。
+第一段是给lock-free下定义，第二段是对lock-free做解释。
 
-lock-free的关键描述是如果一个线程被暂停，那么其他线程应能继续前进，它需要有系统级（system-wide）的吞吐。这样说可能还是不够直观，我们从反面来看，假设我们要借助锁实现一个无锁队列，我们可以直接使用线程不安全的std::queue + std::mutex来做：
+因此，如果2个线程竞争同一个互斥锁或者自旋锁，那它就不是lock-free的。
+
+因为如果我们暂停持有锁的线程，那么另一个线程会被阻塞。
+
+wiki的这段描述很抽象，它不够直观，稍微再解释一下：
+
+lock-free描述的是代码逻辑的属性，不使用锁的代码，大部分具有这种属性。所以，我们经常会混淆这lock-free和无锁这2个概念。
+
+其实，lock-free是对代码（算法）性质的描述，是属性，而无锁是说代码如何实现，是手段。
+
+lock-free的关键描述是：如果一个线程被暂停，那么其他线程应能继续前进，它需要有系统级（system-wide）的吞吐。
+
+我们从反面举例来看，假设我们要借助锁实现一个无锁队列，我们可以直接使用线程不安全的std::queue + std::mutex来做：
 ```c++
 template <typename T>
 class Queue {
@@ -495,15 +543,20 @@ private:
     std::mutex q_mutex;
 };
 ```
-如果有线程A/B/C同时执行push方法，最先进入的线程A获得互斥锁，线程B和C因为获取不到互斥锁而陷入等待，这个时候，线程A如果因为某个原因（如出现异常，或者等待某个资源）而被永久挂起，那么同样执行push的线程B/C将被永久挂起，系统整体（system-wide）没法推进，这显然不符合lock-free的要求。
+如果有线程A/B/C同时执行push方法，最先进入的线程A获得互斥锁。
 
-因此：**所有基于锁的并发实现，都不是lock-free的**
+线程B和C因为获取不到互斥锁而陷入等待。
 
-因为它们都会遇到同样的问题：即如果永久暂停当前占有锁的线程/进程的执行，将会阻塞其他线程/进程的执行。而对照lock-free的描述，它允许部分process（理解为执行流）饿死但必须保证整体逻辑的持续前进，基于锁的并发显然是违背lock-free要求的。
+这个时候，线程A如果因为某个原因（如出现异常，或者等待某个资源）而被永久挂起，那么同样执行push的线程B/C将被永久挂起，系统整体（system-wide）没法推进。这显然不符合lock-free的要求。
+
+因此：所有基于锁（包括spinlock）的并发实现，都不是lock-free的。
+
+因为它们都会遇到同样的问题：即如果永久暂停当前占有锁的线程/进程的执行，将会阻塞其他线程/进程的执行。
+
+而对照lock-free的描述，它允许部分process（理解为执行流）饿死但必须保证整体逻辑的持续前进，基于锁的并发显然是违背lock-free要求的。
 
 #### CAS loop实现lock-free
 Lock-Free同步主要依靠CPU提供的read-modify-write原语，著名的“比较和交换”CAS（Compare And Swap）在X86机器上是通过cmpxchg系列指令实现的原子操作，CAS逻辑上用代码表达是这样的：
-
 ```c++
 bool CAS(T* ptr, T expect_value, T new_value) {
    if (*ptr != expect_value) {
@@ -515,13 +568,13 @@ bool CAS(T* ptr, T expect_value, T new_value) {
 ```
 CAS接受3个参数：
 - 内存地址
-- 期望值，这个值通常传第一个参数所指内存地址中的旧值
+- 期望值，通常传第一个参数所指内存地址中的旧值
 - 新值
-逻辑描述：CAS比较内存地址中的值和期望值，如果不相同就返回失败，如果相同就将新值写入内存并返回。
+逻辑描述：CAS比较内存地址中的值和期望值，如果不相同就返回失败，如果相同就将新值写入内存并返回成功。
 
 当然这个C函数描述的只是CAS的逻辑，这个函数操作不是原子的，因为它可以划分成几个步骤：读取内存值、判断、写入新值，各步骤之间是可以插入其他操作的。
 
-不过前面讲了，原子指令相当于把这些步骤打包，它可能是通过`lock; cmpxchg`实现的，但那是实现细节，我们更应该注重在逻辑上理解它的行为。
+不过前面讲了，原子指令相当于把这些步骤打包，它可能是通过`lock; cmpxchg`实现的，但那是实现细节，程序员更应该注重在逻辑上理解它的行为。
 
 通过CAS实现Lock-free的代码通常借助循环，代码如下：
 ```c
@@ -580,30 +633,42 @@ public:
 - 所以，在加载head值和cas之间，如果其他线程调用push操作，改变了head的值，那没有关系，该线程的本次cas失败，下次重试便可以了
 - 多个线程同时push时，任一线程在任意步骤阻塞/挂起，其他线程都会继续执行并最终返回，无非就是多执行几次while循环
 
-这样的行为逻辑显然符合lock-free的定义。
+这样的行为逻辑显然符合lock-free的定义，注意用cas+loop实现自旋锁不符合lock-free的定义，注意区分。
 
 ***ABA问题**
-ABA问题 ：CAS经常伴随ABA问题，考虑前面的CAS逻辑，CAS里会做判等，判等的2个操作数，一个是前步加载的内存地址的值，另一个是再次从内存地址读取的值，如果2个操作数相等，它便认为内存位置的值没变。
+CAS经常伴随ABA问题，考虑前面的CAS逻辑，CAS里会做判等，判等的2个操作数，一个是前步加载的内存地址的值，另一个是再次从内存地址读取的值，如果2个操作数相等，它便认为内存位置的值没变。
 
-但实际上，“两次读取一个内存位置的值相同则说明该内存位置没变”，这个假设不一定成立，为什么呢？
+但实际上，如果“两次读取一个内存位置的值相同，则说明该内存位置没变”，这个假设不一定成立，为什么呢？
 
-假设线程1在前面一步从内存位置加载数据后，线程2切入，将该内存位置的数据从A修改为B，然后又修改为A，等到线程1继续执行CAS的时候，它观测到的内存位置值未变（依然是A），因为线程2将数据从A修改到B，再修改成A，线程1两次读到了相同的值，它便断定内存位置没有被修改，实际并非如此，线程2改了内存位置。
+假设线程1在前面一步从内存位置加载数据后。
+
+线程2切入，将该内存位置的数据从A修改为B，然后又修改为A。
+
+等到线程1继续执行CAS的时候，它观测到的内存位置值未变（依然是A），因为线程2将数据从A修改到B，再修改成A。
+
+线程1两次读到了相同的值，它便断定内存位置没有被修改，实际并非如此，线程2改了内存位置。
 
 基于上述逻辑行事，就有可能出现未定义的结果。
 
 这就是经典的ABA问题，会不会出问题，完全取决于你的程序逻辑，有些逻辑可以容忍ABA问题，而有些不可以。
 
-ABA问题很多时候由内存复用引起，比如一个指针被回收后又被分配，地址值不变，但这个对象已经不是之前的那个对象了，有很多解决ABA问题的技术手段，比如增加版本号等等，目的无非是去识别这种变化。
+ABA问题很多时候由内存复用引起，比如一块内存被回收后又被分配，地址值不变，但这个对象已经不是之前的那个对象了，有很多解决ABA问题的技术手段，比如增加版本号等等，目的无非是去识别这种变化。
 
 ### wait-free
 wiki关于wait-free的词条解释：
 > Wait-freedom is the strongest non-blocking guarantee of progress, combining guaranteed system-wide throughput with starvation-freedom. An algorithm is wait-free if every operation has a bound on the number of steps the algorithm will take before the operation completes.[15] This property is critical for real-time systems and is always nice to have as long as the performance cost is not too high.
 
-翻译过来就是：wait-free有着最强的非阻塞进度保证，wait-free有系统级吞吐兼具无饥饿特征，如果一个算法的每个操作完成都只有有限操作步数，那么这个算法就是wait-free的，这个特征对于实时系统非常关键，且它的性能成本不会太高。
+翻译过来就是：wait-free有着最强的非阻塞进度保证，wait-free有系统级吞吐兼具无饥饿特征。
+
+如果一个算法的每个操作完成都只有有限操作步数，那么这个算法就是wait-free的。
+
+这个特征对于实时系统非常关键，且它的性能成本不会太高。
 
 wait-free比lock-free更严格，所有wait-free算法都是lock-free的，反之不成立，wait-free是lock-free的子集。
 
-wait-free的关键特征是所有步骤都在有限步骤完成，所以前面的`cas + loop`实现的lock-free栈就不是wait-free的。因为理论上，如果调用push的线程是个倒霉蛋，一直有其他线程push且恰好又都成功了，则这个倒霉蛋线程的cas会一直失败，一直循环下去，这与wait-free每个操作都必须在有限步骤完成的要求相冲突。wait-free的尝试次数通常跟线程数有关，线程数越多，则这个有限的上限就越大。
+wait-free的关键特征是所有步骤都在有限步骤完成，所以前面的`cas + loop`实现的lock-free栈就不是wait-free的。
+
+因为理论上，如果调用push的线程是个倒霉蛋，一直有其他线程push且恰好又都成功了，则这个倒霉蛋线程的cas会一直失败，一直循环下去，这与wait-free每个操作都必须在有限步骤完成的要求相冲突。wait-free的尝试次数通常跟线程数有关，线程数越多，则这个有限的上限就越大。
 
 但前面讲的atomic fetch_add则是wait-free的，因为它不会失败。
 
@@ -612,15 +677,13 @@ wait-free的关键特征是所有步骤都在有限步骤完成，所以前面�
 wait-free非常难做，以前一直看不到wait-free的数据结构和算法实现，直到2011才有人搞出了一个wait-free队列，虽然这个队列也用到了cas，但是它为每一步发送的操作提供了一个state array，为每个操作赋予一个number，从而保证有限步完成入队出队操作，论文链接：(wait-free queue)[http://www.cs.technion.ac.il/~erez/Papers/wfquque-ppopp.pdf]
 
 ## Obstruction-free
-Obstruction-free提供比lock-free提更弱的一个非阻塞进度保证，所有lock-free都属于Obstruction-free。
+Obstruction-free提供比lock-free更弱的一个非阻塞进度保证，所有lock-free都属于Obstruction-free。
 
 Obstruction-free翻译过来叫无障碍，是指在任何时间点，一个孤立运行线程的每一个操作可以在有限步之内结束。只要没有竞争，线程就可以持续运行，一旦共享数据被修改，Obstruction-free要求中止已经完成的部分操作，并进行回滚，obstruction-free是并发级别更低的非阻塞并发，该算法在不出现冲突性操作的情况下提供单线程式的执行进度保证。
 
 obstruction-freedom要求可以中止任何部分完成的操作并且能够回滚已做的更改，为了内容完备性，把obstruction-free列在这里。
 
 ### 无锁数据结构
-Additionally, some non-blocking data structures are weak enough to be implemented without special atomic primitives. These exceptions include:
-
 一些无锁（阻塞）数据结构不需要特殊原子操作原语即可实现，例如：
 - 支持单线程读和单线程写的Ring Buffer先进先出队列，通过把容量设置为2^n，利用整型回绕特点+内存屏障就可以实现，参考linux内核的kfifo
 - 带单写线程和任意数读线程的读拷贝更新（RCU），通常，读无等待（wait-free），写无锁（lock-free）
@@ -629,13 +692,12 @@ Additionally, some non-blocking data structures are weak enough to be implemente
 无锁数据结构实现起来比较困难，非必要不要自己去实现。
 
 ### 自旋锁
-在cpu核上自旋，粘着cpu不停的测试，直到其他cpu解锁，这是一种消耗cpu的加锁方式，适合持有锁的时间非常短的情况，它基于一种假设，睡眠导致的调度开销大于在cpu上自旋测试的开销。
-
+在cpu核上自旋，粘着cpu不停的测试，直到其他cpu解锁，这是一种消耗cpu的加锁方式，适合持有锁的时间非常短的情况，它基于一种假设：睡眠导致的调度开销大于在cpu上自旋测试的开销。
 - 自旋锁也叫优雅粒度的锁，跟操作系统提供的阻塞机制的粗粒度锁（mutex和信号量）对应。
 - 自旋锁一般不应该被长时间持有，如果持有锁的时间可能比较长，那就用操作系统为你提供的粗粒度的锁就好了。
-- 自旋锁一般不应该持有锁的时候，线程一般不应该被调度走，内核层可以禁中断禁调度，但应用层程序一般无法避免线程被调度走，所以应用层使用自旋锁其实得不到保障。
+- 线程持有自旋锁的时候，线程一般不应该被调度走，内核层可以禁中断禁调度保障这一点，但应用层程序一般无法避免线程被调度走，所以应用层使用自旋锁其实得不到保障。
 - 自旋锁不可递归。
-- 自旋锁常用来追求低延时，而不是为了提升系统吞吐，因为自旋锁，不会把执行线程调度走，不会阻塞（睡眠）
+- 自旋锁常用来追求低延时，而不是为了提升系统吞吐，因为自旋锁，不会把执行线程调度走，不会阻塞（睡眠）。
 
 ### 程序序（Program Order）
 对单线程程序而言，代码会一行行顺序执行，就像我们编写的程序的顺序那样。比如
