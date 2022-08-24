@@ -225,6 +225,10 @@ int main()
 
 \_mm256\_store\_ps表示将寄存器中的结果保存到内存中，同样的也可以使用\_mm256\_stream\_ps表示绕过cache直接写入内存中，如果当前数据没有立即被使用时其性能会更好。
 
+
+
+#### Reductions
+
 AVX2中支持丰富的指令集，利用这些指令我们可以手动实现一些向量化的函数来提升性能。比如对于如下的条件判断函数，其作用是求源数组中所有正数的和，通常我们可以有如下实现:
 
 ```c++
@@ -242,7 +246,7 @@ int sum_positive_scalar(const int * src, size_t count)
 
 如果开启自动向量化，上面的程序如果打开O3编译选项一般可以进行自动向量化编译，但如果分支条件变得更加复杂，编译器无法自动向量化时，我们可以通过手动向量化该函数来加速计算。
 
-下面的程序中首先通过\_mm256_cmpgt_epi32来获取大于0的mask标记为，mask实际上是一个0和1组成的__m256i变量，通过\_mm256_maskload_epi32来load满足mask的数据，并将其与res累加起来，最后通过hsum函数将\_\_m256i中的8个int累加起来，实现的方式是想将高128位和低128位提取出来相加，然后执行一次128位的hadd，此时只需要将前64位的两个int相加，即可得到整个向量的和。
+下面的程序中首先通过\_mm256_cmpgt_epi32来获取大于0的mask标记位，mask实际上是一个0和1组成的__m256i变量，通过\_mm256_and_si256得到满足mask条件的所有result结果，并将其与res累加起来，最后通过hsum函数将result中的8个int累加起来，实现的方式是想将高128位和低128位提取出来相加，然后执行一次128位的hadd，此时只需要将前64位的两个int相加，即可得到整个向量的和。通过下面的向量化实现，我们可以获得与编译器自动向量化版本相等的性能结果。比不开启自动向量化优化性能有6倍的提升。
 
 ![image-20220817164313346](./pic/2.png)
 
@@ -263,11 +267,67 @@ int sum_positive_scalar(const int * src, size_t count)
       {
           const __m256i __attribute__((aligned(32))) *vsrc = reinterpret_cast<const __m256i *>(src + i);
           __m256i mask = _mm256_cmpgt_epi32(*vsrc, bound);
-          res = _mm256_add_epi32(res, _mm256_maskload_epi32(src+i, mask));
+          res = _mm256_add_epi32(res, _mm256_and_si256(vsrc, mask));
       }
       return hsum(res);
   }
 ```
+
+#### shuffle
+
+filter是数据库中常见的算子，filter实现的功能是将满足一定条件的input数据输出到output中。非向量化的代码实现如下：
+
+```
+int filter(int * input, int bond, int * output) {
+    int k = 0;
+
+    for (int i = 0; i < N; i++)
+        if (input[i] < bond)
+            output[k++] = input[i];
+
+    return k;
+}
+```
+
+我们可以使用`_mm256_permutevar8x32_epi32`来实现filter的向量化。首先需要建立一个lookup table。
+
+```
+struct Precalc {
+    alignas(64) int permutation[256][8];
+
+    constexpr Precalc() : permutation{} {
+    for (int m = 0; m < 256; m++) {
+        int k = 0;
+        for (int i = 0; i < 8; i++)
+        if (m >> i & 1)
+        		permutation[m][k++] = i;
+        }
+    }
+};
+
+static constexpr Precalc T;
+int filter(int * input, int bond, int * output) {
+    int k = 0;
+    const __m256i p = _mm256_set1_epi32(bond);
+    for (int i = 0; i < N; i += 8)
+    {
+        __m256i x = _mm256_load_si256( (__m256i*)input[i]);
+
+        __m256i m = _mm256_cmpgt_epi32(p, x);
+        int mask = _mm256_movemask_ps((__m256) m);
+        __m256i permutation = _mm256_load_si256( (__m256i*) &T.permutation[mask] );
+
+        x = _mm256_permutevar8x32_epi32(x, permutation);
+        _mm256_storeu_si256((__m256i*) output[i], x);
+
+        k += __builtin_popcount(mask);
+    }
+
+    return k;
+} 
+```
+
+
 
 ### BloomFilter的SIMD实现
 
