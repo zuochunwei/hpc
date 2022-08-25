@@ -28,7 +28,7 @@ SIMD(**Single instruction, multiple data**),即单指令，多数据，是费林
 
 预备知识：IPC,FLOPS
 
-在科学计算汇总，一般使用FLOPS都是衡量处理器的算力，FLOPS即Floating Point Operations Per Second，表示每秒钟执行的单精度浮点数操作数。一般理论上最大的FLOPS计算如下:
+在科学计算中，一般使用FLOPS都是衡量处理器的算力，FLOPS即Floating Point Operations Per Second，表示每秒钟执行的单精度浮点数操作数。一般理论上最大的FLOPS计算如下:
 $$
 \begin {aligned}
 peak\ FLOPS = &FP\ operators\ per\ instructions\ (SIMD\ width) \\  
@@ -42,7 +42,7 @@ $$
 
 在GCC编译器中,指定优化选项 `-O3` or `-ftree-vectorize` 即可开启自动向量化。除此之外，我们可以通过编译器支持的指令来提示编译器进行自动向量化技术编译代码。通常自动向量化编译的代码性能都不错。
 
-* __restrict
+* **__restrict**
 
 GCC或LLVM编译器都提供了\_\_restrict关键字来帮助程序实现自动向量化。\_\_restrict 关键字的作用是告诉编译器该变量的内存独占且不存在重叠，可以进行SIMD优化。
 
@@ -85,7 +85,7 @@ add_norestrict(int*, int const*, int const*):             # @add_norestrict(int*
         ret
 ```
 
-* simd pragma
+* **simd pragma**
 
 pragma是编译器提供的帮助编译器自动向量化的指令，比如: pragma GCC ivdep表示下面的循环没有依赖关系，编译器可以进行自动向量化编译。
 
@@ -133,7 +133,7 @@ void add (int * a, const int * b, int n) {
 }
 ```
 
-* GCC vector type
+* **GCC vector type**
 
 c++中有valarray类型执行向量化计算。GCC中也可以通过\_\_attribute\_\_(vector_size(32))定义一个vector类型，这里的32表示vector的大小，如果是int类型，则vector可以表示8个int。并且vector之间支持加减乘除等运算符。所以对于vector type我们可以有下面的用法。
 
@@ -161,7 +161,9 @@ ps:表示计算类型是单精度浮点数
 
 pd：表示计算类型是多精度浮点数
 
-epi8/16/32/64 表示计算类型是8/16/32/64位整型
+epi8/16/32/64 表示计算类型是有符号8/16/32/64位整型
+
+Epu8/16/32/64 表示计算类型是无符号8/16/32/64位整型
 
 si128/256 表示计算类型是128/256位整型
 
@@ -277,7 +279,7 @@ int sum_positive_scalar(const int * src, size_t count)
 
 filter是数据库中常见的算子，filter实现的功能是将满足一定条件的input数据输出到output中。非向量化的代码实现如下：
 
-```
+```c++
 int filter(int * input, int bond, int * output) {
     int k = 0;
 
@@ -289,7 +291,21 @@ int filter(int * input, int bond, int * output) {
 }
 ```
 
-我们可以使用`_mm256_permutevar8x32_epi32`来实现filter的向量化。首先需要建立一个lookup table。
+
+
+我们可以使用`_mm256_permutevar8x32_epi32`来实现filter的向量化。向量化实现时需要建立一个lookup table。lookup table中保存的是0-255的二进制对应的偏移量数组，比如对于13，二进制是00001101，对应的数组是{0,2,3,0,0,0,0,0}。这里只有前三个值是有效的。
+
+可以按照以下步骤对上述的filter函数进行向量化实现。
+
+1. `_mm256_cmpgt_epi32`对8个整型值与P进行比较，得到比较后的mask向量
+2. `_mm256_movemask_ps`讲mask向量转换成8-bit的整型值。
+3. 根据8-bit整型值查找lookup table得到得到需要排序的permutation向量
+
+4. `_mm256_permutevar8x32_epi32`函数通过permutation向量来重新排列input向量。比如对于一个数组{1,2,3,4,5,6,7,8}通过{0,2,3,0,0,0,0,0}数组重排得到新的值为{1,3,4,1,1,1,1,1}。只有前三位是有效的。
+5. 将结果保存在output向量中，其中有部分结果是不需要的。
+6. `__builtin_popcount`计算出新的偏移量k,下一次保存到output时以第k地址所在位置开始保存。
+
+向量化版本的实现中无论选择率的大小，性能都比较稳定。因为向量化实现中去除了条件选择判断，并且实现了比非向量化版本更好的性能。
 
 ```
 struct Precalc {
@@ -311,14 +327,14 @@ int filter(int * input, int bond, int * output) {
     const __m256i p = _mm256_set1_epi32(bond);
     for (int i = 0; i < N; i += 8)
     {
-        __m256i x = _mm256_load_si256( (__m256i*)input[i]);
+        __m256i x = _mm256_load_si256( (__m256i*)&input[i]);
 
         __m256i m = _mm256_cmpgt_epi32(p, x);
         int mask = _mm256_movemask_ps((__m256) m);
         __m256i permutation = _mm256_load_si256( (__m256i*) &T.permutation[mask] );
 
         x = _mm256_permutevar8x32_epi32(x, permutation);
-        _mm256_storeu_si256((__m256i*) output[i], x);
+        _mm256_storeu_si256((__m256i*) &output[k], x);
 
         k += __builtin_popcount(mask);
     }
@@ -447,7 +463,7 @@ int count_positive(const int *src,
 }
 ```
 
-分支判断成功时，res加1，分支判断失败时，res减1，实际上我们可以直接用res加上分支判断的结果，这样便可以去掉分支判断的影响。具体实现如下面的代码所示：
+在带有分支判断的实现中，分支判断成功时，res加1，分支判断失败时，res不变。实际上我们可以直接用`res += (src[i] >= 0)`来代替分支判断的结果，这样便可以去掉分支判断对性能的影响。不带有分支判断实现的好处在于无论分支判断的选择率如何，性能会比较稳定，不会出现较大的波动。具体实现如下面的代码所示：
 
 ```c++
 int count_positive(const int *src, 
@@ -461,7 +477,7 @@ int count_positive(const int *src,
 }
 ```
 
-对于分支判断的代码，我们也可以使用SIMD向量化实现更高的性能。SIMD的写法如下：
+实际上，对于这类简单的分支判断，我们也可以使用SIMD Intrinsic来完成向量化实现。SIMD可以使程序在没有自动向量化的情况下也可以实现更高的性能。SIMD的写法如下：
 
 ```c++
 int count_positive(const int * src, size_t count)
@@ -491,7 +507,7 @@ C++11 中的std::atomic描述了 6 种可以应用于原子变量的内存次序
 
 但它们表示的是三种内存模型:(memory_order_consume目前被当成memory_order_acquire处理)
 
-- sequential consistent([memory_order_seq_cst](https://www.zhihu.com/search?q=memory_order_seq_cst&search_source=Entity&hybrid_search_source=Entity&hybrid_search_extra={"sourceType"%3A"answer"%2C"sourceId"%3A83422523})),
+- sequential consistent(memory_order_seq_cst),
 - relaxed(memory_order_relaxed)
 - acquire release(memory_order_consume, memory_order_acquire, memory_order_release, memory_order_acq_rel),
 
@@ -610,30 +626,32 @@ C++11 中的std::atomic描述了 6 种可以应用于原子变量的内存次序
    ptr.store(p, std::memory_order_release);
    ```
 
-* CPU缓存一致性storebuffer，InvalidQueue（ARM VS INTEL）
+### CPU缓存一致性协议
 
-  现代CPU中一般采用的memory hierarchy的方式，越靠近CPU的cache读写速度也越快。多核CPU之间Cache一般是不共享的，所以需要通过缓存一致性协议MESI来保持CPU之间的状态一致。
+现代CPU中一般采用的memory hierarchy的方式，越靠近CPU的cache读写速度也越快。多核CPU之间Cache一般是不共享的，所以需要通过缓存一致性协议MESI来保持CPU之间的状态一致。
 
-  MESI包括独占(exclusive)、共享(share)、修改(modified)、失效(invalid)，用来描述该缓存行是否被多处理器共享、是否修改。
+MESI包括独占(exclusive)、共享(share)、修改(modified)、失效(invalid)，用来描述该缓存行是否被多处理器共享、是否修改。
 
-  - 独占(exclusive)：仅当前处理器拥有该缓存行，并且没有修改过，是最新的值。
-  - 共享(share)：有多个处理器拥有该缓存行，每个处理器都没有修改过缓存，是最新的值。
-  - 修改(modified)：仅当前处理器拥有该缓存行，并且缓存行被修改过了，一定时间内会写回主存，会写成功状态会变为S。
-  - 失效(invalid)：缓存行被其他处理器修改过，该值不是最新的值，需要读取主存上最新的值。
-
-
-
-* context switch
-
-* lock（shared rw lock & unqiue lock） vs atomic
-
-  一般来说锁的开销要大于原子操作，常见的锁分为自旋锁，互斥锁，读写锁。自旋锁通过用于较短时间的锁，因为它会长时间占用CPU，互斥锁的原理是将CPU置于等待队列中，等待唤醒，所以 常用于较长时间的上锁。读写锁更多用于读多写少的场景。
+- 独占(exclusive)：仅当前处理器拥有该缓存行，并且没有修改过，是最新的值。
+- 共享(share)：有多个处理器拥有该缓存行，每个处理器都没有修改过缓存，是最新的值。
+- 修改(modified)：仅当前处理器拥有该缓存行，并且缓存行被修改过了，一定时间内会写回主存，会写成功状态会变为S。
+- 失效(invalid)：缓存行被其他处理器修改过，该值不是最新的值，需要读取主存上最新的值。
 
 
 
 ### cpu clock/ timer
 
-同样，我们要对一段程序进行性能测试时，需要记录程序运行的时间，在Linux平台上有多种计时工具，常见的如clock, gettimeofday, clock_gettime, std::chrono::system_clock, std:;chrono::steady_clock, std::chrono::high_resolution_clock, rdtsc。在所有的计时工具中，std::chrono的稳定性和精度均为良好并且跨平台性最好(C++11标准)，rdtsc精度最高，速度最快，稳定性最好 。我们所有的性能测试均采用std::chrono::high_resolution_clock的计时方式来测试性能。
+当我们要对一段程序进行性能测试或者调优时，通常需要通过计时器来记录程序运行的时间。
+
+在Linux平台上有多种计时工具，常见的如`clock`, `gettimeofday`, `clock_gettime`, `std::chrono::system_clock`, `std::chrono::steady_clock`, `std::chrono::high_resolution_clock`, `rdtsc`等等。
+
+在所有的计时工具中，`clock_gettime`计时器本身的开销大概在1ns(实际测量时间与CPU主频有关)。其与`std::chrono::steady_clock`, `std::chrono::high_resolution_clock`, `std::chrono::system_clock`精度接近。但它的稳定性和精度跨平台性最好(C++11标准)。`clock_gettime`函数原型是`int clock_gettime( clockid_t clock_id,struct timespec * tp );`其中`clockid_t`时钟类型取值有`CLOCK_REALTIME`,`CLOCK_MONOTONIC`,`LOCK_PROCESS_CPUTIME_ID`,`CLOCK_THREAD_CPUTIME_ID`等。`CLOCK_REALTIME`代表POSIX系统时间自1970-01-01起经历的绝对时间。这个时间会被用户更新时间打断。`CLOCK_MONOTONIC`代表系统单调时间，表示自开机起经历的时间。它不可以被中断。`LOCK_PROCESS_CPUTIME_ID`代表进程执行的时间。`CLOCK_THREAD_CPUTIME_ID`代表线程启动后执行的时间。所以建议使用更稳定的`CLOCK_MONOTONIC`时钟。
+
+`rdtsc`在相同的CPU主频下精度最高，速度最快，稳定性最好，但并非所有CPU均支持 。
+
+`std::chrono::steady_clock`, `std::chrono::high_resolution_clock`,基本一致，它们记录的是相对时间，并且不会因为修改系统时间而受影响。`std::chrono::system_clock`记录的是绝对时间。可能会被用户打断。它们的最小精度都可以到纳秒级别。
+
+在linux平台下，我们的性能测试数据是采用`std::chrono::high_resolution_clock`的计时方式来测试的。其精度可以满足我们对性能测试的要求。
 
 ```c++
 #include <chrono>
