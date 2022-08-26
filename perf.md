@@ -74,16 +74,16 @@ top 中最常关注的还有RSS，一般指的是物理内存的占用情况。R
 
 PMU,即perf monitor unit，性能监控单元。每个 PMU 模型包含一组寄存器：性能监视配置 (PMC) 和性能监视数据 (PMD)。这两个寄存器都是可读的，但只有 PMC 是可写的。这些寄存器用于储存配置信息和数据。
 
-Perf,也叫perf tools，或perf tools,是Linux内核提供的性能分析工具。perf是基于perf_event_open的内核系统调用。支持硬件性能计数(HPC),软件性能计数，kprobe，uprobe, tracepoints等多种事件。以PMC为例，perf执行的原理如下：
+Perf,也叫perf events，或perf tools,是Linux内核提供的性能分析工具。perf是基于perf_event_open的内核系统调用。支持硬件性能计数(HPC),软件性能计数，kprobe，uprobe, tracepoints等多种事件。以PMC为例，perf执行的原理如下：
 
 1. 通过sys_perf_event_open()的系统调用向内核注册一个PMC的计数器并在内核中通过mmap申请内存用于保存采样结果。
 2. PMC通过专用的寄存器随CPU cycles的增长而累加，当PMC溢出时，PMU会产生一个PMI硬件中断。
 3. 在中断函数中完成一次采样：采样信息包括HPC计数值，触发中断的指令地址，时间戳，PID等信息。并存入perf_event_open()申请的内存中
 4. perf通过read读取采样信息，根据PID等信息找到对应进程，并根据进程ELF符号表解析为对应的函数调用信息。
 
-* perf events
 
-Perf events：Perf_events包括以下几类：
+
+Perf events：Perf_events包括以下几种类型：
 
 * 硬件事件：PMU产生的CPU性能监控计数
 * 软件事件：基于Kernel技术的事件，比如CPU migrations, minor faults, major faults,等
@@ -159,6 +159,35 @@ perf script -i perf.data &> perf.unfold
 ./flamegraph.pl perf.folded > perf.svg
 ```
 
+on-cpu & off-cpu
+
+```x86asm
+On-CPU：线程在 CPU 上运行的时间。
+Off-CPU：计时器、分页/交换等上阻塞时所花费的时间。
+```
+
+Off-CPU 是一种用于测量和研究 CPU时间之外以及上下文堆栈跟踪的性能分析方法。它不同于 On-CPU 仅分析在 CPU 上执行的线程。它的目标是分析被阻止线程状态，Off-CPU 外分析是对 On-CPU 分析的补充。此方法也不同于应用程序阻塞的跟踪技术，因为此方法针对内核调度程序被阻塞原因的分析，比应用程序阻塞分析的应用场景更广。
+
+造成线程Off-CPU 的原因有很多，包括 I/O 和锁，但也有一些与当前线程的执行无关的原因，包括由于对 CPU 资源的高需求而导致的非自愿上下文切换和中断。无论出于什么原因，如果在工作负载请求（同步代码路径）期间发生这种情况，则造成延迟。
+
+
+
+
+
+#### BPF
+
+BPF,eBPF,BCC
+
+BPF全称是**Berkeley Packet Filter**，翻译过来是**伯克利包过滤器**，BPF诞生在1992年，最初是为了解决 Unix 内核实现网络数据包过滤的问题。BPF的主要原理是在内核中设计了一个新的BPF虚拟机可以有效地工作在基于寄存器结构的 CPU 之上，应用程序使用缓存只复制与过滤数据包相关的数据，不会复制数据包的所有信息，最大程度地减少BPF 处理的数据，提高处理效率。常用的抓包工具tcpdump就是基于BPF技术实现的。
+
+eBPF全称是**enhanced Berkeley Packet Filter**。eBPF的原理是用户程序中编译生成BPF字节码指令，并加载到 BPF JIT 模式的虚拟机中，在虚拟机中将字节码指令转成内核可执行的本地指令运行。eBPF提供可基于系统或程序事件高效安全执行特定代码的通用能力，且具有很高的执行效率。其使用场景不再仅仅是网络分析，可以基于eBPF开发性能分析、系统追踪、网络优化等多种类型的工具和平台。
+
+BCC全称是**BPF Compiler Collection**，是python封装的eBPF工具集。基于 BCC 实现的各种跟踪 BPF 程序，可以查看到必要的内核的内部结构。BCC 提供了内置的 Clang 编译器，可以在运行时编译 BPF 代码，以实现运行在目标主机上的特定内核中。
+
+
+
+![image-20220826105932146](./pic/3.png)
+
 #### 定位内存泄漏
 
 ##### 1. valgrind
@@ -208,6 +237,8 @@ pprof -gv ./main test.prof
 编译选项
 
 GCC ：-fsanitize=address：开启内存越界检测
+
+
 
 
 

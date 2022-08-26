@@ -22,9 +22,21 @@ NUMA解决了SMP扩展性的问题。NUMA的主要特征是将CPU进行分组，
 
 ## SIMD
 
-CPU除了多核并化的优化外，另一个比较重要的优化便是SIMD。SIMD在很多基础软件中有很多重要的应用，如BloomFilter，加密算法等。
+在费林分类法(Flynn's taxonomy)下，根据指令流和数据流来分类，共分为四种类型的计算平台
 
-SIMD(**Single instruction, multiple data**),即单指令，多数据，是费林分类法(Flynn's taxonomy)下的一种并行处理技术。从1997年面向x86架构下的MMX指令扩展（80-bits 寄存器），到后来的SSE1-SSE4.2(128bits XMM寄存器)，AVX/AVX2（256bits YMM寄存器）， AVX512（512bits ZMM寄存器），SIMD寄存器的长度每增大一倍，一般相应的性能也得到显著提升。除了Intel平台，AMD也曾经发布了基于x86架构的扩展指令集SSE5。Arm平台在ARMv7也有NEON sets，一种128-bits的固定长度的指令集; 在ARMv8开始支持的SVEand SVE2 instruction sets(最大到2048 bits)可变长度的指令集。指令集架构简写为ISA(Instruction Set Architecture),大多数Linux服务器中均支持SSE4_2，AVX/AVX2，AVX512等指令集。通过lscpu可以通过Flags查看当前CPU支持的ISA。
+单指令流单数据流机器（SISD）：单核的串行数据流，早期的冯诺.依曼架构机器都是SISD架构。
+
+单指令流多数据流机器（SIMD）：单核的并行数据流，一般支持ISA的单核计算机是这个架构。
+
+多指令流单数据流机器（MISD）：多核的串行数据流，理论模型，还没有应用过。
+
+多指令流多数据流机器（MIMD）：多核的并行数据流，目前的大多数多核计算机都是这个分类。
+
+SIMD(**Single instruction, multiple data**),即单指令，多数据，是费林分类法下的一种并行处理技术。SIMD可以提高单个核心并行执行的性能，所以是提升程序并行性能的一个重要的优化方法。SIMD在很多基础软件中有很多重要的应用，如BloomFilter，哈希函数，加密算法等。
+
+从1997年开始出现了面向x86架构下的MMX指令扩展，该指令集使用的是80-bits 寄存器。后来出现了SSE系列指令集SSE1-SSE4.2，使用的是128bits XMM寄存器，再后来是AVX/AVX2指令集，使用256bits YMM寄存器，目前Intel平台上支持指令最长的指令集是 AVX512，使用的是512bits ZMM寄存器，一次指令支持512bits的数据计算。SIMD的寄存器长度越长，单个指令可以处理的数据量也就越多，所以提高了程序的并行执行效率，从而提升了性能。SIMD寄存器的长度每增大一倍，一般相应的性能也得到显著提升。
+
+除了Intel平台，AMD也曾经发布了基于x86架构的扩展指令集SSE5。Arm平台在ARMv7也有NEON sets，一种128-bits的固定长度的指令集; 在ARMv8开始支持的SVEand SVE2 instruction sets(最大到2048 bits)可变长度的指令集。指令集架构简写为`ISA(Instruction Set Architecture)`,大多数Linux服务器中均支持SSE4_2，AVX/AVX2，AVX512等指令集。通过`lscpu`可以通过Flags查看当前CPU支持的指令集架构。
 
 预备知识：IPC,FLOPS
 
