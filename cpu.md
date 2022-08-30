@@ -99,7 +99,7 @@ add_norestrict(int*, int const*, int const*):             # @add_norestrict(int*
 
 * **simd pragma**
 
-pragma是编译器提供的帮助编译器自动向量化的指令，比如: pragma GCC ivdep表示下面的循环没有依赖关系，编译器可以进行自动向量化编译。
+pragma是编译器提供的帮助编译器自动向量化的指令，比如: pragma GCC ivdep表示下面的循环没有依赖关系，GCC编译器可以进行自动向量化编译。
 
 ```c++
 void add (int * a, const int * b, int n) {
@@ -109,7 +109,7 @@ void add (int * a, const int * b, int n) {
 }
 ```
 
-对于pragma GCC ivdep而言，编译器会进行编译时的依赖关系检查决定是否进行自动向量化。而pragma omp simd可以强制编译器进行自动向量化优化。OpenMP是跨平台共享内存的API，支持C, C++, fortran语言。通过pragma omp simd告诉编译器不必检查依赖关系，由用户保证，只需要强制自动向量化即可。需要注意的是，如果想要使用openmp，在编译时需要加入编译选项-fopenmp。并且可以通过-mavx2来制定使用AVX2指令集。
+对于pragma GCC ivdep而言，GCC编译器会进行编译时的依赖关系检查决定是否进行自动向量化。除了依赖编译器提供的编译优化选项来优化也可以利用openmp来提示编译器自动向量化。OpenMP是跨平台共享内存的API，支持C, C++, fortran语言。而`#pragma omp simd`可以强制编译器进行自动向量化优化。`#pragma omp simd`告诉编译器不必检查依赖关系，由用户保证，只需要强制自动向量化即可。需要注意的是，如果想要使用openmp，在编译时需要加入编译选项-fopenmp。并且可以通过-mavx2来制定使用AVX2指令集。
 
 ```c++
 void add (int * a, const int * b, int n) {
@@ -119,7 +119,7 @@ void add (int * a, const int * b, int n) {
 }
 ```
 
-pragma还可以提示编译器进行循环展开优化。比如:pragma GCC unroll n。在循环内展开有助于减少程序的循环次数，更好的利用cache line优化等。
+在程序中，循环展开可以提示编译器更好的进行自动向量化优化。我们可以通过手写下面的代码来手动进行循环展开。在循环内展开有助于减少程序的循环次数，更好的利用cache line优化等。在较新的c++11之后版本中提供了`pragma unroll n`的编译优化提示。GCC编译器也提供了`pragma GCC unroll n`提示编译器进行循环展开优化。在clang编译器也可以使用`#pragma clang loop unroll_count(n)`来指定循环展开层数。Clang编译器种n可以指定为full，由编译器来决定循环展开的层数。
 
 ```c++
 void add (int * a, const int * b, int n) {
@@ -135,7 +135,7 @@ void add (int * a, const int * b, int n) {
 }
 ```
 
-以下代码等价于上面的实现，通过pragma 提示编译器以下循环可以展开，并且可以提示展开的大小，使得程序更加简洁。
+以下代码等价于上面的实现，通过pragma 提示编译器以下循环可以展开，并且可以提示展开的大小，当n=0或者1时，表示阻止编译器循环展开。这样的写法使得程序更加简洁。同样，你也可以使用GCC的function attribute`__attribute__((optimize("unroll-loops", "O3")))`或者`#pragma GCC optimize ("unroll-loops")`指定某一函数是否进行循环展开。需要注意的是以上编译优化是GCC编译器提供的循环展开优化。循环展开的层数一般不能超过寄存器的长度，比如YMM寄存器的最大长度是256bits，所以unroll loops一般超过8之后可能不会有加速效果。
 
 ```c++
 void add (int * a, const int * b, int n) {
@@ -143,6 +143,21 @@ void add (int * a, const int * b, int n) {
   for (int i = 0; i < n; i++)
       a[i] += b[i];
 }
+
+__attribute__((optimize("unroll-loops", "O3")))
+void add (int * a, const int * b, int n) {
+  for (int i = 0; i < n; i++)
+      a[i] += b[i];
+}
+
+#pragma GCC push_options
+#pragma GCC optimize ("unroll-loops")
+void add (int * a, const int * b, int n) {
+  for (int i = 0; i < n; i++)
+      a[i] += b[i];
+}
+
+#pragma GCC pop_options
 ```
 
 * **GCC vector type**
@@ -694,6 +709,8 @@ private:
 https://gcc.gnu.org/onlinedocs/gcc/Other-Builtins.html （Build_in 内置指令）
 
 https://www.ibm.com/docs/en/zos/2.4.0?topic=pragmas-individual-pragma-descriptions (Pragma优化)
+
+https://gcc.gnu.org/onlinedocs/gcc-4.5.2/gcc/Optimize-Options.html（optimize options）
 
 http://svmoore.pbworks.com/w/file/fetch/70583970/VectorOps.pdf
 

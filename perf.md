@@ -94,7 +94,7 @@ Perf events：Perf_events包括以下几种类型：
 
 
 
-通过perf list可以查看当前perf支持的perf events， 通过-e可以指定对应的事件。
+通过perf list可以查看当前perf支持的perf events。
 
 ```
 List of pre-defined events (to be used in -e):
@@ -120,15 +120,28 @@ List of pre-defined events (to be used in -e):
    (see 'man perf-list' on how to encode it)
 
   mem:<addr>[/len][:access]                          [Hardware breakpoint]
+  
+  ......
+  sched:sched_stat_blocked                           [Tracepoint event]
+  sched:sched_stat_iowait                            [Tracepoint event]
+  sched:sched_stat_runtime                           [Tracepoint event]
+  sched:sched_stat_sleep                             [Tracepoint event]
+  sched:sched_stat_wait                              [Tracepoint event]
+  skb:consume_skb                                    [Tracepoint event]
+  skb:kfree_skb                                      [Tracepoint event]
+  skb:skb_copy_datagram_iovec                        [Tracepoint event]
+  ......
 ```
 
-在root用户下执行perf top命令，可以看到指定perf events下的所有进程的热点函数
+以上是perf version 5.4.119版本的输出结果，从中我们可以看到Software event，比如常用的cpu-clock, context-switches, page-faults, Hardware breakpoint, 比如mem, Tracepoint event 比如常见的sched, skb等等。不同版本的perf event可能不一样，如果发现某些events不存在可以通过升级perf来解决。
 
+在root用户下执行perf 命令，可以看到指定-e 来指定需要跟踪的perf events，使用方式如下
+
+```
 perf top -e <event list>
-
 perf stat –e <event list>
-
 perf record –e <event list>
+```
 
 
 
@@ -184,7 +197,16 @@ eBPF全称是**enhanced Berkeley Packet Filter**。eBPF的原理是用户程序�
 
 BCC全称是**BPF Compiler Collection**，是python封装的eBPF工具集。基于 BCC 实现的各种跟踪 BPF 程序，可以查看到必要的内核的内部结构。BCC 提供了内置的 Clang 编译器，可以在运行时编译 BPF 代码，以实现运行在目标主机上的特定内核中。
 
+在BCC中有很多工具可以使用，比如常见的off-cpu定位工具，可以得到off-cpu的火焰图。
 
+```
+#/usr/share/bcc/tools/offcputime -df -p `pgrep -nx mysqld` --state=2 30 > out.stacks
+# /usr/share/bcc/tools/offcputime -df -p `pgrep -nx mysqld` 30 > out.stacks
+[...copy out.stacks to your local system if desired...]
+# git clone https://github.com/brendangregg/FlameGraph
+# cd FlameGraph
+# ./flamegraph.pl --color=io --title="Off-CPU Time Flame Graph" --countname=us < out.stacks > out.svg
+```
 
 ![image-20220826105932146](./pic/3.png)
 

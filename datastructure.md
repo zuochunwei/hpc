@@ -26,7 +26,84 @@ RoaringBitmap表示压缩位图索引。在这之前我们先得了解什么是B
 
 ## BloomFilter
 
-*Bloom Filter*是由Bloom在1970年提出的一种空间效率高的概率型数据结构。它可以用来查找某一个元素是否存在于集合中。BloomFilter有多种变种，比如ribbon filters， cuckoo filter， SIMD blocked Bloom filter，Xor Filter等。
+*Bloom Filter*是由Bloom在1970年提出的一种空间效率高的概率型数据结构。它可以用来查找某一个元素是否存在于集合中。
+
+BloomFilter有几个关键的参数。
+
+`m`代表由m个bit组成的位数组，初始化全部为0。
+
+`k`代表有k个哈希函数，每个哈希函数的作用是将集合中的某个元素哈希映射到位数组的某一个位置，并将对应的bit位置为1。
+
+BloomFilter有两个主要的方法：插入和查找。
+
+插入：将要插入的一个元素经过哈希函数映射到位数组的某一个bit位，将对应的bit位置为1。所以k个哈希函数可以将位数组的k个bit位置为1。
+
+查找：将要查找的元素经过k次哈希函数计算后找到位数组的k个bit位，如果对应的bit位都为1，则表示该元素可能存在于集合中。而如果有一个bit位不为1，则表示该元素一定不在集合中。
+
+从以上的介绍中可以发现，BloomFilter可能存在误判，也就是说某一个元素可能不存在集合中，但其对应的bit位都为1.
+
+衡量BloomFilter的误判率称为false positives。 false positives可以通过以下公式计算得到
+$$
+\epsilon = (1-(1-1/m)^{kn})^{k} \approx(1-e^{-kn/m})^{k}
+$$
+n表示插入的元素的个数。
+
+由此我们可以得出最优的散列函数的个数k可以通过下面的计算得到
+$$
+k = m/n ln2
+$$
+位数组中位的大小m可以计算通过下面的计算得到
+$$
+m = -nlnP/(ln2)^2
+$$
+一般我们可以根据误判率来计算得到位数组的大小m，同时得到散列函数的个数k。
+
+由上面的分析我们可以写出一个bloomfilter的实现
+
+```
+class BloomFilter
+{
+  public:
+      BloomFilter(size_t size_, size_t hashes_);
+
+      bool find(const char * data, size_t len);
+      void add(const char * data, size_t len);
+
+  private:
+      size_t size;
+      size_t hashes;
+      std::vector<char> filter;
+};
+  
+BloomFilter::BloomFilter(size_t size_, size_t hashes_, size_t seed_)
+  : size(size_), hashes(hashes_), filter(words, 0)
+{
+}
+
+bool BloomFilter::find(const char * data, size_t len)
+{
+    for (size_t i = 0; i < hashes; ++i)
+    {
+        size_t pos = std::hash<std::string>(std::string{data, len}) % (8 * size);
+        if (!(filter[pos / 8] & (1ULL << (pos % 8 ))))
+        		return false;
+    }
+    return true;
+}
+
+void BloomFilter::add(const char * data, size_t len)
+{
+    for (size_t i = 0; i < hashes; ++i)
+    {
+        size_t pos = std::hash<std::string>(std::string{data, len}) % (8 * size);
+        filter[pos / 8] |= (1ULL << (pos % 8));
+    }
+}
+```
+
+
+
+BloomFilter有多种变种，比如ribbon filters， cuckoo filter， SIMD blocked Bloom filter，Xor Filter等。相比于经典的BloomFilter算法，新的变种在性能上，空间使用上已经有了很大的提升。
 
 ## ConcurrentHashMap
 
