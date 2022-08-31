@@ -62,43 +62,43 @@ $$
 
 ```
 class BloomFilter
-{
-  public:
-      BloomFilter(size_t size_, size_t hashes_);
+  {
+    public:
+        BloomFilter(size_t size_, size_t hashes_);
 
-      bool find(const char * data, size_t len);
-      void add(const char * data, size_t len);
+        bool find(const char * data, size_t len);
+        void add(const char * data, size_t len);
 
-  private:
-      size_t size;
-      size_t hashes;
-      std::vector<char> filter;
-};
-  
-BloomFilter::BloomFilter(size_t size_, size_t hashes_, size_t seed_)
-  : size(size_), hashes(hashes_), filter(words, 0)
-{
-}
+    private:
+        size_t size;
+        size_t hashes;
+        std::vector<char> filter;
+  };
 
-bool BloomFilter::find(const char * data, size_t len)
-{
-    for (size_t i = 0; i < hashes; ++i)
-    {
-        size_t pos = std::hash<std::string>(std::string{data, len}) % (8 * size);
-        if (!(filter[pos / 8] & (1ULL << (pos % 8 ))))
-        		return false;
-    }
-    return true;
-}
+  BloomFilter::BloomFilter(size_t size_, size_t hashes_)
+    : size(size_), hashes(hashes_), filter(size, 0)
+  {
+  }
 
-void BloomFilter::add(const char * data, size_t len)
-{
-    for (size_t i = 0; i < hashes; ++i)
-    {
-        size_t pos = std::hash<std::string>(std::string{data, len}) % (8 * size);
-        filter[pos / 8] |= (1ULL << (pos % 8));
-    }
-}
+  bool BloomFilter::find(const char * data, size_t len)
+  {
+      for (size_t i = 0; i < hashes; ++i)
+      {
+          size_t pos = std::hash<std::string_view>()(std::string_view{data, len}) % (8 * size);
+          if (!(filter[pos / 8] & (1ULL << (pos % 8 ))))
+                  return false;
+      }
+      return true;
+  }
+
+  void BloomFilter::add(const char * data, size_t len)
+  {
+      for (size_t i = 0; i < hashes; ++i)
+      {
+          size_t pos = std::hash<std::string_view>()(std::string_view{data, len}) % (8 * size);
+          filter[pos / 8] |= (1ULL << (pos % 8));
+      }
+  }
 ```
 
 
