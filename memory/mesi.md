@@ -1,33 +1,33 @@
-# 缓存一致性协议
+## 缓存一致性协议
 
 缓存一致性协议用来管理缓存行（Cache Line）状态，避免出现缓存数据不一致，MESI是用四种状态的首字母缩写命名的缓存一致性协议。
 
-# MESI状态
+## MESI状态
 MESI代表四种状态，分别是：Modified、Exclusive、Shared、Invalid。
 
-## Modified（已修改）
+### Modified（已修改）
 缓存行处于Modified状态表示缓存里的数据已被修改，且还没有存入内存。对应的内存数据保证不会出现在别的CPU的缓存里。因此，处于Modified状态的缓存行可以说被某CPU“拥有（Owned）”。
 
 因为该Cache Line持有数据的唯一一份最新拷贝，所以在该缓存行保存其他数据前，该缓存行必须负责将数据写回内存或将其转移给其他CPU Cache。
 
-## Exclusive（独占）
+### Exclusive（独占）
 Exclusive状态与Modified状态类似，即对应内存数据不会出现在其他CPU的缓存行，这也是独占的语义，Exclusive跟Modified，唯一的不同是处于Exclusive状态的缓存行没有被对应的CPU修改，这也意味着内存里的数据是最新的。
 
 因为处于Exclusive状态的缓存行，可以不经与其他CPU协调就可直接修改，所以，Exclusive状态的缓存行也可以说是被对应CPU拥有。
 
 因为内存里的数据是最新的，所以处于Exclusive的缓存行可以直接丢弃里面的数据，而无须写回内存或者转移给其他CPU Cache。
 
-## Shared（共享）
+### Shared（共享）
 处于共享状态的缓存行，表示对应内存数据被加载到多个CPU Cache。所以，处于Shared状态的缓存行不能直接被CPU修改，在修改前，必须跟其他CPU协商。
 
 同Exclusive状态一样，因为内存数据是最新的，所以处于Exclusive状态的缓存行里的数据可以被直接丢弃，而无须写回内存或者转移给其他CPU Cache。
 
-## Invalid（无效）
+### Invalid（无效）
 无效表示空，即该缓存行没有数据。
 
 当有新数据进入缓存，它会尽可能的找一个空缓存行放置数据，这是因为把数据放到其他状态的缓存行的成本更高，比如，被驱逐的缓存行在将来被引用的话，会导致昂贵的Cache Miss。
 
-## MESI状态小结
+### MESI状态小结
 按照MESI协议，一个缓存行只会处于MESI四种状态中的一种。
 
 Modified状态代表数据被修改，缓存行里的数据比内存数据更新；处于Shared状态的缓存行代表着该内存数据也被加载到其他CPU Cache，多个Cache拥有相同的共享数据，且该数据跟内存数据一致；缓存行数据被修改前需要获取独占权（Exclusive），独占后才能直接对缓存行的数据进行修改；而Invalid表示这个缓存行失效，里面的数据不对应任何内存数据。
@@ -42,36 +42,36 @@ Modified状态代表数据被修改，缓存行里的数据比内存数据更新
 
 因为多CPU维护缓存行的一致视图，所以缓存一致性协议通过系统消息协调缓存行的数据移动，即通过核（CPU）间消息，把数据从一个CPU Cache复制/转移到另一个CPU Cache。
 
-# MESI协议消息
+## MESI协议消息
 上述状态转移，需要借助核间消息才能完成核间通信，这些消息包括：
 
-## Read
+### Read
 Read消息包含要读的缓存行的物理地址
 
-## Read Response
+### Read Response
 读回应消息是对读消息的回应，包含读消息请求的数据。
 
 读回应消息可以通过内存或者其他缓存提供，如果其他缓存持有Read消息想要的数据，且该数据处于Modified状态，那么这个缓存必须提供“读回应”。这很容易理解，因为Modified代表最新的数据保存在缓存行，而并非内存，所以理应由缓存提供“读回应”。
 
-## Invalidate
+### Invalidate
 失效消息包含待置失效的缓存行的物理地址，所有其他缓存必须把对应的数据从缓存行移除并回应Invalidate。
 
-## Invalidate Acknowledge
+### Invalidate Acknowledge
 一个CPU收到Invalidate消息，在将指定的数据从Cache里移除后，必须回一个Invalidate Ack消息。
 
-## Read Invalidate
+### Read Invalidate
 读失效消息包含要读的缓存行的物理地址，同时指示其他缓存移除数据，因此是Read和Invalidate的组合，Read Invalidate需要回2类消息，一个是Read Response，一个是Invalidate Acknowledge集（多个CPU）。
 
-## Writeback
+### Writeback
 写回消息包含要写回内存的地址和数据，这个消息让Cache可以驱逐处于Modified状态的缓存行，从而给其他数据腾出空间。
 
 基于核间消息传递实现的缓存一致性协议MESI，为缓存一致性提供保障。
 
-# MESI状态图
+## MESI状态图
 Cache Line在发送/接收到上述消息后，会在MESI状态间转换。
 
-## M -> E
+### M -> E
 Writeback消息，会将处于Modified状态的缓存行的数据写回内存，状态转换为Exclusive。这时候，内存数据跟缓存行的数据一致，都是最新数据，CPU Cache里依然缓存内存数据，且保留对数据的修改权。
 
-## E -> M
+### E -> M
 处于Exclusive状态的缓存行，可以被直接修改，这时候，缓存行的状态变成Modified，这个转换不需要任何消息发送/接收。
