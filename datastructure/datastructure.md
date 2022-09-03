@@ -56,7 +56,7 @@ HyperLogLog简称HLL，是一种不精确的去重计数算法，用于解决计
 
 假设一共有n个用户，那么实验要估算的数据就是n，第一个1出现的位置前导零的个数用k_max表示。比如下面的hash value的k_max为3.
 
-![hll01](https://github.com/zuochunwei/hpc/blob/main/datastructure/pic/hll01.png)
+![hll01](pic/hll01.png)
 
 当我们的实验次数足够多时我们可以从下面的公式来估算n的个数
 $$
@@ -70,7 +70,7 @@ $$
 
 LogLog算法做了一个优化就是分桶。假设对于上述所有用户的ID经散列函数计算后得到的hash值，取低4位作为分桶的标记位，分桶的个数为m，然后统计接下来的16位中第一个1出现的位置前导零的个数位k。
 
-![hll02](./pic/hll02.png)
+![hll02](pic/hll02.png)
 
 最后将所有桶的k最大值取平均值。那么公式就变为了
 $$
