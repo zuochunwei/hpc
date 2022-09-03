@@ -56,7 +56,7 @@ HyperLogLog简称HLL，是一种不精确的去重计数算法，用于解决计
 
 假设一共有n个用户，那么实验要估算的数据就是n，第一个1出现的位置前导零的个数用k_max表示。比如下面的hash value的k_max为3.
 
-![hll01](./pic/hll01.png)
+![hll01](https://github.com/zuochunwei/hpc/blob/main/datastructure/pic/hll01.png)
 
 当我们的实验次数足够多时我们可以从下面的公式来估算n的个数
 $$
