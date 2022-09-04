@@ -84,6 +84,8 @@ n \approx const \times m\times {\displaystyle \frac{m}{2^ {1/k1+1/k2+...+1/km}}}
 $$
 以上就是HyperLogLog算法的原理介绍。从[HyperLogLog: the analysis of a near-optimal cardinality estimation algorithm](http://algo.inria.fr/flajolet/Publications/FlFuGaMe07.pdf)论文可以看到详细的推导证明。
 
+HyperLogLog有非常广泛的应用，在数据库系统中，基数估算是一类影响优化器决策的重要参数。在Presto等数据库中，HLL常用来估算某一个数据表的行数。
+
 
 
 ## RoaringBitmap
@@ -92,15 +94,17 @@ RoaringBitmap表示压缩位图索引。在这之前我们先得了解什么是B
 
 ## BloomFilter
 
-*Bloom Filter*是由Bloom在1970年提出的一种空间效率高的概率型数据结构。它可以用来查找某一个元素是否存在于集合中。
+在计算机科学中，查找问题是一类重要的问题。查找问题是查找某一个元素是否存在于集合中，比如我们熟知的二分查找等等。为了解决这类查找问题时，我们设计了很多高效的数据结构，除了最常见的set，hashmap，bitmap外，BloomFilter就是一种空间效率非常高的概率型数据结构。它最早是由Bloom在1970年提出的。BloomFilter之所以称之为概率型数据结构，是因为它可以判断一个元素一定不在这个集合中，但不能判断一个元素是否存在集合中，也就是存在一定的误判率。在较小的误判率下，BloomFilter可以显著提升系统的查询性能。
+
+BloomFilter是由bit位组成的位数组组成，初始化为0，每一个将要插入的元素都可以映射到BloomFilter位数组中的某一个bit位，映射的方法就是我们最常使用的散列函数。BloomFilter的基本原理就是将集合中的所有元素通过散列函数映射到位数组中，映射的bit位置为1。待查找的元素同样同样的散列函数找到对应的bit位，如果bit位为1，则该元素可能存在，如果bit位不为1，则该元素不可能存在。
 
 BloomFilter有几个关键的参数。
 
 `m`代表由m个bit组成的位数组，初始化全部为0。
 
-`k`代表有k个哈希函数，每个哈希函数的作用是将集合中的某个元素哈希映射到位数组的某一个位置，并将对应的bit位置为1。
+`k`代表有k个散列函数，每个散列函数的作用是将集合中的某个元素哈希映射到位数组的某一个位置，并将对应的bit位置为1。
 
-BloomFilter有两个主要的方法：插入和查找。
+BloomFilter像其它数据结构一样需要两个最重要的方法：插入和查找。
 
 插入：将要插入的一个元素经过哈希函数映射到位数组的某一个bit位，将对应的bit位置为1。所以k个哈希函数可以将位数组的k个bit位置为1。
 
@@ -114,15 +118,17 @@ $$
 $$
 n表示插入的元素的个数。
 
-由此我们可以得出最优的散列函数的个数k可以通过下面的计算得到
+我们的目标就是使得误判率最小，对上式两侧求导，我们可以得出最优的散列函数的个数k与m，n之间的关系如下。
 $$
-k = m/n ln2
+k = \frac{m}{n} ln2
 $$
 位数组中位的大小m可以计算通过下面的计算得到
 $$
-m = -nlnP/(ln2)^2
+m = \frac {-nln\epsilon}{(ln2)^2}
 $$
 一般我们可以根据误判率来计算得到位数组的大小m，同时得到散列函数的个数k。
+
+通过以上的推导我们可以知道，通过调整散列函数的个数k，以及位数组的大小m可以寻求一定误判率下的时间效率和空间效率的平衡。k越大表示需要计算的散列函数次数越多，则性能相应的会降低，m越大表示需要占用的内存空间越大，空间效率更差。在给定集合中元素个数和误判率的情况下，我们可以得到最优的位数组大小m和散列函数个数k。
 
 由上面的分析我们可以写出一个bloomfilter的实现
 
@@ -167,11 +173,9 @@ class BloomFilter
   }
 ```
 
+BloomFilter有多种变种，比如ribbon filters， cuckoo filter， block bloom filter，Xor Filter等。相比于经典的BloomFilter算法，新的变种在性能和空间使用上已经有了很大的提升。
 
-
-BloomFilter有多种变种，比如ribbon filters， cuckoo filter， SIMD blocked Bloom filter，Xor Filter等。相比于经典的BloomFilter算法，新的变种在性能上，空间使用上已经有了很大的提升。
-
-
+BloomFilter有非常广泛的应用。假如我们做一个kv-store，为了加速会在cache里做kv粒度的缓存。所以 kv-store.lookup(key)的逻辑是，先在cache里查找，找不到再去磁盘文件里搜索。这时就可以用bloom filter，先去bloom filter里查一下，如果返回真，那就去cache里找，如果找不到（可能存在误判），再去磁盘文件里找。
 
 ## SkipList
 
