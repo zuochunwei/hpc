@@ -1,6 +1,6 @@
 ## 定位系统瓶颈
 
-新的系统或者功能在上线前一般会遇到各种各样的瓶颈，或是BUG,内存泄漏抑或是性能瓶颈，这就需要我们能够了解整个系统的运行状况并快速定位系统的瓶颈。俗话说：工欲善其事，必先利其器。linux提供了丰富的定位工具，比如perf，ptrace，eBPF等，除此之外还有丰富的工具可供使用，比如valgrind和gperftools等。
+新的系统或者功能在上线前一般会遇到各种各样的瓶颈，或是BUG,内存泄漏抑或是性能瓶颈，这就需要我们能够了解整个系统的运行状况并快速定位系统的瓶颈。俗话说：工欲善其事，必先利其器。linux提供了丰富的性能定位分析工具，比如perf，ptrace，eBPF等，除此之外还有丰富的内存泄漏定位工具可供使用，比如valgrind,Sanitizer,gperftools等。
 
 ### 系统监控
 
@@ -56,11 +56,29 @@ top 中最常关注的还有RSS，一般指的是物理内存的占用情况。R
 
 * vmstat
 
-​	vmstat也是监控系统的常用指令之一。vmstat中包括了 CPU使用，内存使用，虚拟内存交换swap，IO使用情况，每秒上下文切换cs等信息。其中cs代表线程切换时进程上下文切换的次数。cs越大证明线程切换的代价越大，对性能的影响也会比较大。
+​	vmstat也是监控系统的常用指令之一。vmstat中包括了 CPU使用，内存使用，虚拟内存交换swap，IO使用情况，每秒上下文切换cs等信息。其中cs代表线程切换时进程上下文切换的次数。cs越大表示cs对性能的影响越大，可能是影响系统性能的瓶颈。vmstat常用于分析进程上下文切换对性能的影响。
+
+对于context switch，可以通过pidstat -p ${pid} -w 命令在查看指定进程的内存上下文切换情况。pidstat命令中cswch 与 nvcswch 是重点关注的对象。cswch 表示每秒自愿上下文切换（voluntary context switches）的次数，nvcswch 表示每秒非自愿上下文切换（non voluntary context switches）的次数。
+
+所谓自愿上下文切换，是指进程无法获取所需资源，导致的上下文切换。比如说， I/O、内存等系统资源不足时，就会发生自愿上下文切换。
+
+而非自愿上下文切换，则是指进程由于时间片已到等原因，被系统强制调度，进而发生的上下文切换。比如说，大量进程都在争抢 CPU 时，就容易发生非自愿上下文切换。
 
 * iostat
 
-​	iostat包含了 IO统计信息， 通过iostat -x 1命令可以查看IO utils，观察IO是否达到了系统瓶颈，如果IO一直处于较高的利用率，可以考虑使用RAID磁盘阵列或者更换更快的SSD盘来提升IO的吞吐。
+iostat输出了 IO统计信息, iostat -c输出CPU信息，包括user, nice, system,iowait. Steal, idle信息，iostat -d {sda,sdb}显示设备信息，iostat -d -p {sda, sdb} 显示设备分区信息，设备信息提供每个物理设备或分区的统计信息。iostat -x 命令可以查看IO utils，观察IO是否达到了系统瓶颈，如果IO一直处于较高的利用率，可以考虑使用RAID磁盘阵列或者更换更快的SSD盘来提升IO的吞吐。
+
+**user**
+进程在用户地址空间中消耗 CPU 时间的百分比。像 shell 程序、各种语言的编译器、数据库应用、web 服务器和各种桌面应用都算是运行在用户地址空间的进程。这些程序如果不是处于 idle 状态，那么绝大多数的 CPU 时间都是运行在用户态。
+
+**system**
+进程在内核地址空间中消耗 CPU 时间的百分比。所有进程要使用的系统资源都是由 Linux 内核处理的。当处于用户态(用户地址空间)的进程需要使用系统的资源时，比如需要分配一些内存、或是执行 IO 操作、再或者是去创建一个子进程，此时就会进入内核态(内核地址空间)运行。事实上，决定进程在下一时刻是否会被运行的进程调度程序就运行在内核态。对于操作系统的设计来说，消耗在内核态的时间应该是越少越好。在实践中有一类典型的情况会使 sy 变大，那就是大量的 IO 操作，因此在调查 IO 相关的问题时需要着重关注它。
+
+**iowait**
+CPU 等待磁盘 IO 操作的时间。和 CPU 的处理速度相比，磁盘 IO 操作是非常慢的。有很多这样的操作，比如：CPU 在启动一个磁盘读写操作后，需要等待磁盘读写操作的结果。在磁盘读写操作完成前，CPU 只能处于空闲状态。Linux 系统在计算系统平均负载时会把 CPU 等待 IO 操作的时间也计算进去，所以在我们看到系统平均负载过高时，可以通过 iowait 来判断系统的性能瓶颈是不是过多的 IO 操作造成的。
+
+**idle**
+CPU 处于 idle 状态的百分比。一般情况下， user + nice + idle 应该接近 100%。
 
 
 
@@ -214,7 +232,7 @@ BCC全称是**BPF Compiler Collection**，是python封装的eBPF工具集。基�
 
 ##### 1. valgrind
 
-*Valgrind*是一款用于内存调试、内存泄漏检测以及性能分析的软件开发工具。常用检查项如
+*Valgrind*是一款用于内存调试、内存泄漏检测以及性能分析的软件开发工具。它的原理是**Valgrind** 通过运行时软件翻译二进制指令的执行获取相关的信息。所以valgrind在定位问题时性能会有大幅的下降。常用检查项如
 
 （1）Memcheck。这是valgrind应用最广泛的工具，一个重量级的内存检查器，能够发现开发中绝大多数内存错误使用情况，比如：使用未初始化的内存，使用已经释放了的内存，内存访问越界等。
 
@@ -254,11 +272,64 @@ LD_PRELOAD=/usr/local/lib/libprofiler.so CPUPROFILE=test.prof ./main
 pprof -gv ./main test.prof
 ```
 
-##### 3. asan检查
+##### 3. **Sanitizer**
 
-编译选项
+**Sanitizer** 则是通过编译时插入代码来捕获相关的信息，性能下降幅度比 Valgrind 小很多。大概在2-4倍性能下降。
 
-GCC ：-fsanitize=address：开启内存越界检测
+LLVM 以及 GNU C++ 有多个 Sanitizer：
+
+- AddressSanitizer（ASan）可以发现内存错误问题，比如 use after free，heap buffer overflow，stack buffer overflow，global buffer overflow，use after return，use after scope，memory leak，super large memory allocation；
+- AddressSanitizerLeakSanitizer （LSan）可以发现内存泄露；
+- MemorySanitizer（MSan）可以发现未初始化的内存使用；
+- UndefinedBehaviorSanitizer （UBSan）可以发现未定义的行为，比如越界数组访问、数值溢出等；
+- ThreadSanitizer （TSan）可以发现线程的竞争行为；
+
+Sanitizer在使用时，只需要在编译时添加如下编译选项即可。
+
+```
+-fsanitize=address -fsanitize=undefined -fno-sanitize-recover=all -fsanitize=float-divide-by-zero -fsanitize=float-cast-overflow -fno-sanitize=null -fno-sanitize=alignment
+```
+
+在上述编译选项中，-fsanitize的常见取值有`address,memory,undefined,thread`，但`-fsanntize=memory`和`-fsantize=address`不能同时使用。
+
+下面的程序中存在use-after-free的内存错误问题，在编译时加入-fsanitize=address表示开启ASAN检查，从而得到a.out输出文件。
+
+```
+% cat use-after-free.c
+#include <stdlib.h>
+int main() {
+  char *x = (char*)malloc(10 * sizeof(char*));
+  free(x);
+  return x[5];
+}
+
+%compile
+clang -fsanitize=address -fno-omit-frame-pointer -g use-after-free.c
+```
+
+通过执行a.out文件，可以得到如下的报错信息。可以看到AddressSanitizer检测出heap-use-after-free的内存问题。heap-use-after-free问题表示堆内存释放后再次访问，此时可能访问到空指针或者脏数据。报错信息接下来依次是READ堆栈，内存释放堆栈，内存申请堆栈，通过以上堆栈信息，我们可以得到heap-use-after-free发生在use-after-free.c的第五行。
+
+```
+=================================================================
+==3666426==ERROR: AddressSanitizer: heap-use-after-free on address 0x607000000025 at pc 0x0000004cc9a3 bp 0x7ffce22c95c0 sp 0x7ffce22c95b8
+READ of size 1 at 0x607000000025 thread T0
+    #0 0x4cc9a2 in main /tests/use-after-free.c:5:10
+    #1 0x7f19470e8f92 in __libc_start_main (/lib64/libc.so.6+0x26f92)
+    #2 0x41e449 in _start (/data/ljw/temp/a.out+0x41e449)
+
+0x607000000025 is located 5 bytes inside of 80-byte region [0x607000000020,0x607000000070)
+freed by thread T0 here:
+    #0 0x49a992 in free (/tests/a.out+0x49a992)
+    #1 0x4cc965 in main /tests/use-after-free.c:4:3
+    #2 0x7f19470e8f92 in __libc_start_main (/lib64/libc.so.6+0x26f92)
+
+previously allocated by thread T0 here:
+    #0 0x49abfd in __interceptor_malloc (/data/ljw/temp/a.out+0x49abfd)
+    #1 0x4cc958 in main /tests/use-after-free.c:3:20
+    #2 0x7f19470e8f92 in __libc_start_main (/lib64/libc.so.6+0x26f92)
+```
+
+需要注意的是ASAN符号解析时需要用到llvm-symbolizer，否则报错信息只有地址信息没有符号信息。可以通过安装llvm后指定环境变量ASAN_SYMBOLIZER_PATH来解决。
 
 
 
@@ -267,3 +338,5 @@ GCC ：-fsanitize=address：开启内存越界检测
 参考文档：
 
 https://brendangregg.com/
+
+https://github.com/google/sanitizers/wiki/AddressSanitizer
