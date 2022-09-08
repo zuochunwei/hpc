@@ -90,7 +90,29 @@ HyperLogLog有非常广泛的应用，在数据库系统中，基数估算是一
 
 ## RoaringBitmap
 
-RoaringBitmap表示压缩位图索引。在这之前我们先得了解什么是Bitmap。Bitmap索引经常被用在数据库和搜索引擎中。通过利用位并行运算的优势，它能够显著地加速查询。但是，它也有一个缺点，那就是会耗费更多的内存，因此就有了压缩的BitMap索引。在Bitmap压缩方案中，Roaring bitmaps基于RLE的压缩性能更好。
+RoaringBitmap表示压缩位图索引。在这之前我们先得了解什么是Bitmap。Bitmap索引经常被用在数据库和搜索引擎中。通过利用位并行运算的优势，它能够显著地加速查询。但是，它也有一个缺点，那就是会耗费更多的内存。比如对于uint32的整数类型，整数范围最大为2^32-1，为构建该整数的位图结构，需要占用2^32/8/1024/1024=512M大小的内存空间。但通常情况下，位图是稀疏的，所以可以通过压缩位图来减少内存的使用。在Bitmap压缩方案中，Roaring bitmaps比基于RLE(Run-length encoding)的压缩性能更好。
+
+RoaringBitmap简称为RBM，于2016年由S. Chambi、D. Lemire、O. Kaser等人在论文《Better bitmap performance with Roaring bitmaps》与《Consistently faster and smaller compressed bitmaps with Roaring》中提出。RBM的原理是：将32位无符号整数分为高16位和低16位。按照高16位分桶,也叫做container，即最多可能有`2^ 16=65536`个container。插入数据时，先按照高16位找到container，如果未找到则新建一个，再将低16位放入container中。
+
+低16位的存储分为三种数据结构，ArrayContainer, BitmapContainer,RunContainer。
+
+ArrayContainer
+当桶内数据的基数不大于4096时，会采用ArrayContainer来存储。其本质上是一个unsigned short类型的有序数组。数组初始长度为4，随着数据的增多会自动扩容，最大长度就是4096。当数据达到4096时占用内存大小为8KB。另外还包括有一个计数器，用来实时记录Container内数据的总数。
+
+BitmapContainer
+当桶内数据的基数大于4096时，会采用BitmapContainer来存储。其本质就是普通Bitmap位图，用长度固定为1024的unsigned long型数组表示，每个unsigned long是8个字节，64位，即位图的大小固定为2^16（8KB）。它同样有一个计数器。
+
+RunContainer
+RunContainer使用可变长度的unsigned short数组存储用行程长度编码（RLE）压缩后的数据。
+
+例如，连续的整数序列11, 12, 13, 14, 15, 27, 28, 29会被RLE压缩为两个二元组11, 4, 27, 2，表示11后面紧跟着4个连续递增的值，27后面跟着2个连续递增的值。
+
+由此可见，RunContainer的压缩效果可好可坏。考虑极端情况：如果所有数据都是连续的，那么最终只需要4字节；如果所有数据都不连续（比如全是奇数或全是偶数），那么不仅不会压缩，还会膨胀成原来的两倍大。所以，RBM引入RunContainer是作为其他两种container的折衷方案。
+
+性能分析：对于以上三种Container，BitmapContainer可根据下标直接寻址，复杂度为`O(1)`，ArrayContainer和RunContainer都需要二分查找，复杂度`O(log n)`。
+
+
+内存分析，BitmapContainer是恒定为8KB的。ArrayContainer的空间占用与基数（c）有关，为(2 + 2c)B；RunContainer的则与它存储的连续序列数（r）有关，为(2 + 4r)B
 
 ## BloomFilter
 
@@ -220,3 +242,9 @@ Reference:
    https://hackthology.com/linear-hashing.html
 
    https://dsf.berkeley.edu/jmh/cs186/f02/lecs/lec18_2up.pdf
+
+5. RoaringBitmap
+
+   https://blog.csdn.net/yizishou/article/details/78342499?spm=1001.2101.3001.6661.1&utm_medium=distribute.pc_relevant_t0.none-task-blog-2%7Edefault%7ECTRLIST%7ERate-1-78342499-blog-119736050.pc_relevant_multi_platform_featuressortv2dupreplace&depth_1-utm_source=distribute.pc_relevant_t0.none-task-blog-2%7Edefault%7ECTRLIST%7ERate-1-78342499-blog-119736050.pc_relevant_multi_platform_featuressortv2dupreplace&utm_relevant_index=1
+
+   https://www.jianshu.com/p/818ac4e90daf
