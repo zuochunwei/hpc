@@ -196,9 +196,9 @@ void add (const int * a, const int * b, int *c, int n) {
 }
 ```
 
-对于自动向量化的代码，如何确定是否生成了向量化的代码呢？
+对于自动向量化的代码，如何确定是否生成了向量化的代码呢？可以通过以下两种方式：
 
- GCC 可以通过开启以下编译选项来获取自动向量化结果的详细信息。
+1. 在GCC编译器中， 可以通过开启以下编译选项来获取自动向量化结果的详细信息。
 
 - `-fopt-info-vec`或`-fopt-info-vec-optimized`：编译器将记录哪些循环取得自动向量化优化。
 - `-fopt-info-vec-missed`：有关未向量化的循环的详细信息，以及许多其他详细信息。
@@ -207,7 +207,67 @@ void add (const int * a, const int * b, int *c, int n) {
 
 > **注意：**其他编译器优化也有类似`-fopt-info-[options]-optimized`的标志，例如`inline`：`-fopt-info-inline-optimized`
 
+```
+$cat opt.cpp
+#include <immintrin.h>
 
+void add(int* a, int* b, int n,  int c)
+{
+    for (int i = 0; i < n; ++i)
+        a[i] = b[i] + c;
+}
+$g++ -fopt-info-vec-optimized -O3 -o opt opt.cpp
+opt.cpp:5:23: optimized: loop vectorized using 16 byte vectors
+opt.cpp:5:23: optimized:  loop versioned for vectorization because of possible aliasing
+```
+
+2. 可以在代码中插入汇编指令，通过gcc -S来查找插入汇编代码间是否存在带有xmm，ymm，zmm等寄存器的汇编指令来判断。
+
+```
+asm volatile ("# xxx loop begin");
+for (i = 0; i < n; i++) {
+    ... /∗ hope to be vectorized ∗/
+}
+asm volatile ("# xxx loop end");
+```
+
+例如对于上面的add函数，这里为了方便展示，把循环的次数设置为4。在汇编代码中可以看到xmm寄存器，证明生成的代码使用了SIMD的自动向量化代码生成优化。
+
+```
+$cat opt.cpp
+#include <immintrin.h>
+
+void add(int* a, int* b, int c)
+{
+asm volatile ("add loop begin");
+    for (int i = 0; i < 4; ++i)
+        a[i] = b[i] + c;
+asm volatile ("add loop end");
+}
+
+$g++ -S opt.s -O3 -march=native opt.cpp
+$cat opt.s
+#APP
+# 5 "opt.cpp" 1
+	add loop begin
+# 0 "" 2
+#NO_APP
+	leaq	4(%rsi), %rcx
+	movq	%rdi, %rax
+	subq	%rcx, %rax
+	cmpq	$8, %rax
+	jbe	.L2
+	movdqu	(%rsi), %xmm1
+	movd	%edx, %xmm2
+	pshufd	$0, %xmm2, %xmm0
+	paddd	%xmm1, %xmm0
+	movups	%xmm0, (%rdi)
+.L3:
+#APP
+# 8 "opt.cpp" 1
+	add loop end
+# 0 "" 2
+```
 
 ### **SIMD intrinsic**
 
