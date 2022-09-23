@@ -90,7 +90,7 @@ HyperLogLog有非常广泛的应用，在数据库系统中，基数估算是一
 
 ## RoaringBitmap
 
-RoaringBitmap表示压缩位图索引。在这之前我们先得了解什么是Bitmap。Bitmap索引经常被用在数据库和搜索引擎中。通过利用位并行运算的优势，它能够显著地加速查询。但是，它也有一个缺点，那就是会耗费更多的内存。比如对于uint32的整数类型，整数范围最大为2^32-1，为构建该整数的位图结构，需要占用2^32/8/1024/1024=512M大小的内存空间。但通常情况下，位图是稀疏的，所以可以通过压缩位图来减少内存的使用。在Bitmap压缩方案中，Roaring bitmaps比基于RLE(Run-length encoding)的压缩性能更好。
+在了解RoaringBitmap之前我们先得了解什么是Bitmap。Bitmap索引经常被用在数据库和搜索引擎中。通过利用位并行运算的优势，它能够显著地加速查询。但是，它也有一个缺点，那就是会耗费更多的内存。比如对于uint32的整数类型，整数范围最大为2^32-1，为构建该整数的位图结构，需要占用2^32/8/1024/1024=512M大小的内存空间。但通常情况下，位图是稀疏的，所以可以通过压缩位图来减少内存的使用。所以便有了RoaringBitmap，RoaringBitmap表示压缩位图索引。在Bitmap压缩方案中，Roaring bitmaps比基于RLE(Run-length encoding)的压缩性能更好。
 
 RoaringBitmap简称为RBM，于2016年由S. Chambi、D. Lemire、O. Kaser等人在论文《Better bitmap performance with Roaring bitmaps》与《Consistently faster and smaller compressed bitmaps with Roaring》中提出。RBM的原理是：将32位无符号整数分为高16位和低16位。按照高16位分桶,也叫做container，即最多可能有`2^ 16=65536`个container。插入数据时，先按照高16位找到container，如果未找到则新建一个，再将低16位放入container中。
 
@@ -116,7 +116,7 @@ RunContainer使用可变长度的unsigned short数组存储用行程长度编码
 
 ## BloomFilter
 
-在计算机科学中，查找问题是一类重要的问题。查找问题是查找某一个元素是否存在于集合中，比如我们熟知的二分查找等等。为了解决这类查找问题时，我们设计了很多高效的数据结构，除了最常见的set，hashmap，bitmap外，BloomFilter就是一种空间效率非常高的概率型数据结构。它最早是由Bloom在1970年提出的。BloomFilter之所以称之为概率型数据结构，是因为它可以判断一个元素一定不在这个集合中，但不能判断一个元素是否存在集合中，也就是存在一定的误判率。在较小的误判率下，BloomFilter可以显著提升系统的查询性能。
+在计算机科学中，查找问题是一类重要的问题。查找问题是查找某一个元素是否存在于集合中，比如我们熟知的二分查找等等。为了解决这类查找问题时，我们设计了很多高效的数据结构，除了最常见的set，hashmap，bitmap外，BloomFilter就是一种空间效率非常高的概率型数据结构。它最早是由Bloom在1970年提出的。BloomFilter之所以称之为概率型数据结构，是因为它可以判断一个元素一定不在这个集合中，但不能判断一个元素是否存在集合中，也就是存在一定的误判率。在较小的误判率下，BloomFilter可以显著提升系统的查询性能，并且减少对系统的内存消耗。
 
 BloomFilter是由bit位组成的位数组组成，初始化为0，每一个将要插入的元素都可以映射到BloomFilter位数组中的某一个bit位，映射的方法就是我们最常使用的散列函数。BloomFilter的基本原理就是将集合中的所有元素通过散列函数映射到位数组中，映射的bit位置为1。待查找的元素同样同样的散列函数找到对应的bit位，如果bit位为1，则该元素可能存在，如果bit位不为1，则该元素不可能存在。
 
@@ -248,3 +248,4 @@ Reference:
    https://blog.csdn.net/yizishou/article/details/78342499?spm=1001.2101.3001.6661.1&utm_medium=distribute.pc_relevant_t0.none-task-blog-2%7Edefault%7ECTRLIST%7ERate-1-78342499-blog-119736050.pc_relevant_multi_platform_featuressortv2dupreplace&depth_1-utm_source=distribute.pc_relevant_t0.none-task-blog-2%7Edefault%7ECTRLIST%7ERate-1-78342499-blog-119736050.pc_relevant_multi_platform_featuressortv2dupreplace&utm_relevant_index=1
 
    https://www.jianshu.com/p/818ac4e90daf
+
