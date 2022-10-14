@@ -46,6 +46,10 @@ int32_t JumpConsistentHash(uint64_t key, int32_t num_buckets) {
 
 Hashtable是最常使用的数据结构之一。Linear Hashing是一种哈希表算法。它通常用于在数据库和文件系统中实现哈希索引。它用于动态调整hashtable。
 
+
+
+
+
 ## HLL
 
 HyperLogLog简称HLL，是一种不精确的去重计数算法，用于解决计算机科学中的count distinct问题和应用数学中的基数估算问题。通常提到去重计算的数据结构，我们可以想到set，bitmap，hashmap等。但在数据量较小的场景下，以上算法尚且可用，但当数据量达到上亿级别时，以上数据结构的内存消耗则迅速变大，性能也不尽如人意。以占用内存较小的bitmap为例，每个元素在bitmap占据一个bit位，对于一百亿条数据的集合，需要10^11/8/1024/1024=1.2GB内存。此时，HyperLogLog就派上了用场了。

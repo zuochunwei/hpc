@@ -8,7 +8,7 @@
 
 #### top
 
-​		top通常是查看系统负载，CPU利用率，进程内存使用情况最常使用的工具。Load average 中的三个数字分别代表 1 分钟，5 分钟，15 分钟的正在运行或者等待运行的进程个数。top -u user 可以查看某个用户的进程信息。top -p pid 查看某个进程的信息。如果想要查看某个 cpu 的信息，可以使用 mpstat -P coreid 来查看。
+​		top通常是查看系统负载，CPU利用率，进程内存使用情况最常使用的工具。Load average 中的三个数字分别代表 1 分钟，5 分钟，15 分钟的正在运行或者等待运行的进程个数。top -u user 可以查看某个用户的进程信息。top -p pid 查看某个进程的信息。如果想要查看某个 cpu 的信息，可以使用 `mpstat -P $coreid `来查看。
 
 top 中最常关注的还有 RSS，一般指的是物理内存的占用情况。RSS越大就证明进程的内存占用越多，如果持续增长有可能是内存泄漏的问题。
 
@@ -50,7 +50,19 @@ Flags:               fpu vme de pse tsc msr pae mce cx8 apic sep mtrr pge mca cm
 
  free 是更常用的查看内存大小的命令。`free -h` 表示按照GB显示大小 。命令输出中可以看到 total 代表总的内存大小，used 代表已使用的内存大小，buffer/cache 的内存大小，available 的内存大小。可以发现 total 的大小等于 free 的内存加上 buff/cache 的内存大小再加上 used 的大小。
 
-这里的buff/cache包括的是 page cache 和 buffer cache 的大小之和。page cache 用作文件系统的文件缓存，比如进程对文件 read/write 操作或者 mmap 调用时使用。buffer cache 也是block cache是用作系统对块设备读写时的缓存。在 Linux 内核中可以通过 修改 /proc/sys/vm/drop_caches 来清理 buff/cache。例如 echo 3 > /proc/sys/vm/drop_caches 来清理 buff/cache 的内存。需要注意的是 tmpfs 的内存占用也是显示在 buff/cache 中的。swap 表示的是交换内存的信息，如果未开启，则显示的都是0。
+这里的buff/cache包括的是 page cache 和 buffer cache 的大小之和。page cache 用作文件系统的文件缓存，比如进程对文件 read/write 操作或者 mmap 调用时使用。buffer cache 也是block cache是用作系统对块设备读写时的缓存。
+
+在 Linux 内核中可以通过 修改 /proc/sys/vm/drop_caches 来清理 buff/cache。
+
+**echo 1 > /proc/sys/vm/drop_caches**:表示清除pagecache。
+
+**echo 2 > /proc/sys/vm/drop_caches**:表示清除回收slab分配器中的对象（包括目录项缓存和inode缓存）。slab分配器是内核中管理内存的一种机制，其中很多缓存数据实现都是用的pagecache。
+
+**echo 3 > /proc/sys/vm/drop_caches**:表示清除pagecache和slab分配器中的缓存对象。
+
+需要注意的是 tmpfs 的内存占用也是显示在 buff/cache 中的。
+
+swap 表示的是交换内存的信息，如果未开启，则显示的都是0。
 
 ```
               total        used        free      shared  buff/cache   available
@@ -268,7 +280,17 @@ List of pre-defined events (to be used in -e):
   ......
 ```
 
-以上是 perf version 5.4.119 版本的输出结果，从中我们可以看到 Hardware event, 包括cache-misses, cpu-clocks, branch-misses。 Software event，比如常用的 cpu-clock, context-switches, page-faults, Hardware breakpoint , 比如 mem , Tracepoint event 比如常见的 sched, skb 等等。不同版本的 perf event 可能不一样，如果发现某些 events 不存在可以通过升级perf来解决。
+以上是 perf version 5.4.119 版本的输出结果，输出到信息包括 
+
+Hardware event, 包括cache-misses, cpu-clocks, branch-misses等。 
+
+Software event，比如常用的 cpu-clock, context-switches, page-faults, 
+
+Hardware breakpoint , 比如 mem 。 
+
+Tracepoint event 比如常见的 sched, skb 等等。
+
+不同版本的 perf event 可能不一样，如果发现某些 events 不存在可以通过升级perf来解决。
 
 在root用户下执行perf 命令，可以看到指定 -e 来指定需要跟踪的perf events，使用方式如下
 
@@ -307,7 +329,7 @@ perf script -i perf.data &> perf.unfold
 ./flamegraph.pl perf.folded > perf.svg
 ```
 
-on-cpu & off-cpu
+On-CPU & Off-CPU
 
 ```x86asm
 On-CPU：线程在 CPU 上运行的时间。
@@ -332,7 +354,7 @@ eBPF全称是 **enhanced Berkeley Packet Filter**。eBPF的原理是用户程序
 
 BCC全称是 **BPF Compiler Collection**，是python封装的eBPF工具集。基于 BCC 实现的各种跟踪 BPF 程序，可以查看到必要的内核的内部结构。BCC 提供了内置的 Clang 编译器，可以在运行时编译 BPF 代码，以实现运行在目标主机上的特定内核中。
 
-在BCC中有很多工具可以使用，比如常见的off-cpu定位工具，可以得到off-cpu的火焰图。
+在BCC中有很多工具可以使用，比如常见的 Off-CPU 定位工具，可以得到 Off-CPU 的火焰图。
 
 ```
 #/usr/share/bcc/tools/offcputime -df -p `pgrep -nx mysqld` --state=2 30 > out.stacks
