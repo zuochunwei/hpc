@@ -226,7 +226,7 @@ Perf events：Perf_events包括以下几种类型：
 * 硬件事件：PMU产生的CPU性能监控计数
 * 软件事件：基于Kernel技术的事件，比如CPU migrations, minor faults, major faults,等
 
-- 内核追踪事件：内核级别的插桩点
+- 内核追踪事件：内核级别的插桩点, 内核追踪事件是内核中已有的插桩点，位于 /sys/kernel/debug/tracing 目录下，也可以被ftrace使用。
 - 动态追踪: 包括内核态kprobe和用户态的uprobe事件。
 - 时间采样: perf可以指定采用频率，通过 `perf record -F*Hz*`命令。
 
@@ -352,9 +352,15 @@ BPF全称是 **Berkeley Packet Filter**，翻译过来是**伯克利包过滤器
 
 eBPF全称是 **enhanced Berkeley Packet Filter**。eBPF的原理是用户程序中编译生成 BPF 字节码指令，并加载到 BPF JIT 模式的虚拟机中，在虚拟机中将字节码指令转成内核可执行的本地指令运行。eBPF 提供可基于系统或程序事件高效安全执行特定代码的通用能力，且具有很高的执行效率。其使用场景不再仅仅是网络分析，可以基于 eBPF 开发性能分析、系统追踪、网络优化等多种类型的工具和平台。
 
-BCC全称是 **BPF Compiler Collection**，是python封装的eBPF工具集。基于 BCC 实现的各种跟踪 BPF 程序，可以查看到必要的内核的内部结构。BCC 提供了内置的 Clang 编译器，可以在运行时编译 BPF 代码，以实现运行在目标主机上的特定内核中。
+BCC全称是 **BPF Compiler Collection**，是 python 封装的 eBPF 工具集。基于 BCC 实现的各种跟踪 BPF 程序，可以查看到必要的内核的内部结构。BCC 提供了内置的 Clang 编译器，可以在运行时编译 BPF 代码，以实现运行在目标主机上的特定内核中。
 
-在BCC中有很多工具可以使用，比如常见的 Off-CPU 定位工具，可以得到 Off-CPU 的火焰图。
+
+
+bcc 和 bpftrace 都是基于 BPF 的工具，bcc 可以用于复杂的工具和进程，bpftrace 用于单行程序和短脚本。
+
+**bcc**
+
+bcc 是 apache license 下的开源软件，在 bcc 中有丰富的工具和例子可以使用，比如常见的 Off-CPU 定位工具，可以得到 Off-CPU 的火焰图。
 
 ```
 #/usr/share/bcc/tools/offcputime -df -p `pgrep -nx mysqld` --state=2 30 > out.stacks
@@ -366,6 +372,14 @@ BCC全称是 **BPF Compiler Collection**，是python封装的eBPF工具集。基
 ```
 
 ![image-20220826105932146](./pic/3.png)
+
+**bpftrace**
+
+bpftrace 也是 apache license 下的开源软件。bpftrace 是由 Alastair Robertson 作为一个业余项目创建的，使用来自 bcc 的库。bpftrace 非常适合使用强大的定制一行程序和简短脚本进行 ad hoc 检测，而 bcc 则非常适合复杂的工具和守护进程。
+
+
+
+
 
 #### 定位内存泄漏
 
