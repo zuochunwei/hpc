@@ -759,44 +759,6 @@ MESI包括独占(exclusive)、共享(share)、修改(modified)、失效(invalid)
 
 
 
-### cpu clock/ timer
-
-当我们要对一段程序进行性能测试或者调优时，通常需要通过计时器来记录程序运行的时间。
-
-在Linux平台上有多种计时工具，常见的如`clock`, `gettimeofday`, `clock_gettime`, `std::chrono::system_clock`, `std::chrono::steady_clock`, `std::chrono::high_resolution_clock`, `rdtsc`等等。
-
-在所有的计时工具中，`clock_gettime`计时器本身的开销大概在1ns(实际测量时间与CPU主频有关)。其与`std::chrono::steady_clock`, `std::chrono::high_resolution_clock`, `std::chrono::system_clock`精度接近。但它的稳定性和精度跨平台性最好(C++11标准)。`clock_gettime`函数原型是`int clock_gettime( clockid_t clock_id,struct timespec * tp );`其中`clockid_t`时钟类型取值有`CLOCK_REALTIME`,`CLOCK_MONOTONIC`,`LOCK_PROCESS_CPUTIME_ID`,`CLOCK_THREAD_CPUTIME_ID`等。`CLOCK_REALTIME`代表POSIX系统时间自1970-01-01起经历的绝对时间。这个时间会被用户更新时间打断。`CLOCK_MONOTONIC`代表系统单调时间，表示自开机起经历的时间。它不可以被中断。`LOCK_PROCESS_CPUTIME_ID`代表进程执行的时间。`CLOCK_THREAD_CPUTIME_ID`代表线程启动后执行的时间。所以建议使用更稳定的`CLOCK_MONOTONIC`时钟。
-
-`rdtsc`在相同的CPU主频下精度最高，速度最快，稳定性最好，但并非所有CPU均支持 。
-
-`std::chrono::steady_clock`, `std::chrono::high_resolution_clock`,基本一致，它们记录的是相对时间，并且不会因为修改系统时间而受影响。`std::chrono::system_clock`记录的是绝对时间。可能会被用户打断。它们的最小精度都可以到纳秒级别。
-
-在linux平台下，我们的性能测试数据是采用`std::chrono::high_resolution_clock`的计时方式来测试的。其精度可以满足我们对性能测试的要求。
-
-```c++
-#include <chrono>
-#include <iostream>
-
-class Timer
-{
-public:
-    void start() { start_time = std::chrono::high_resolution_clock::now(); }
-    void end() {
-        end_time = std::chrono::high_resolution_clock::now();
-        elapse = end_time - start_time;
-        std::cout << "time elapse: " << elapse.count() * 1000 << "ms" <<  std::endl;
-    }
-
-private:
-    std::chrono::time_point<std::chrono::high_resolution_clock> start_time;
-    std::chrono::time_point<std::chrono::high_resolution_clock> end_time;
-    std::chrono::duration<double> elapse;
-
-};
-```
-
-
-
 **reference** ：
 
 https://gcc.gnu.org/onlinedocs/gcc/Other-Builtins.html （Build_in 内置指令）

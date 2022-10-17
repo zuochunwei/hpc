@@ -1,12 +1,60 @@
 # 性能测试
 
-  在一个复杂的系统中，我们经常需要对程序进行性能测试，针对不同的设计方案选择性能更高的方案，那么首先我们需要一个性能测试的工具，除了通过计时工具来对核心代码进行性能采样，但通过计时器只能测样一次，所以测量结果通常容易因环境变化而产生偏差。并且计时器通常得到的是执行时间，对于不同频率的 CPU 结果可能是完全不同的。在日常开发中，我们可以通过以下工具或方法来精确测试程序的性能瓶颈。
+  在一个复杂的系统中，我们经常需要对程序进行性能测试，针对不同的设计方案选择性能更高的方案，那么首先我们需要一个性能测试的工具，除了通过计时工具来对核心代码进行性能采样，在日常开发中，我们可以通过以下工具或方法来精确测试程序的性能瓶颈。
 
 
 
-## Google Benchmark
+### CPU Clock/ Timer
 
-Google Benchmark 可以对程序中的核心代码进行针对性的性能测试，有助于我们学习和理解性能的瓶颈。
+当我们要对一段程序进行性能测试或者调优时，通常需要通过计时器来记录程序运行的时间。
+
+在Linux平台上有多种计时工具，常见的如`clock`, `gettimeofday`, `clock_gettime`, `std::chrono::system_clock`, `std::chrono::steady_clock`, `std::chrono::high_resolution_clock`, `rdtsc`等等。
+
+在所有的计时工具中，`clock_gettime`计时器本身的开销大概在1ns(实际测量时间与CPU主频有关)。其与`std::chrono::steady_clock`, `std::chrono::high_resolution_clock`, `std::chrono::system_clock`精度接近。但它的稳定性和精度跨平台性最好(C++11标准)。
+
+`clock_gettime`函数原型是
+
+```
+int clock_gettime( clockid_t clock_id,struct timespec * tp );
+```
+
+其中`clockid_t`时钟类型取值有`CLOCK_REALTIME`,`CLOCK_MONOTONIC`,`LOCK_PROCESS_CPUTIME_ID`,`CLOCK_THREAD_CPUTIME_ID`等。`CLOCK_REALTIME`代表POSIX系统时间自1970-01-01起经历的绝对时间。这个时间会被用户更新时间打断。`CLOCK_MONOTONIC`代表系统单调时间，表示自开机起经历的时间。它不可以被中断。`LOCK_PROCESS_CPUTIME_ID`代表进程执行的时间。`CLOCK_THREAD_CPUTIME_ID`代表线程启动后执行的时间。所以建议使用更稳定的`CLOCK_MONOTONIC`时钟。
+
+`rdtsc`在相同的CPU主频下精度最高，速度最快，稳定性最好，但并非所有CPU均支持 。
+
+`std::chrono::steady_clock`, `std::chrono::high_resolution_clock`,基本一致，它们记录的是相对时间，并且不会因为修改系统时间而受影响。`std::chrono::system_clock`记录的是绝对时间。可能会被用户打断。它们的最小精度都可以到纳秒级别。
+
+在linux平台下，我们的性能测试数据可以采用`std::chrono::high_resolution_clock`的计时方式来测试的。其精度可以满足我们对性能测试的要求。
+
+```c++
+#include <chrono>
+#include <iostream>
+
+class Timer
+{
+public:
+    void start() { start_time = std::chrono::high_resolution_clock::now(); }
+    void end() {
+        end_time = std::chrono::high_resolution_clock::now();
+        elapse = end_time - start_time;
+        std::cout << "time elapse: " << elapse.count() * 1000 << "ms" <<  std::endl;
+    }
+
+private:
+    std::chrono::time_point<std::chrono::high_resolution_clock> start_time;
+    std::chrono::time_point<std::chrono::high_resolution_clock> end_time;
+    std::chrono::duration<double> elapse;
+
+};
+```
+
+通过计时器只能采样一次，所以测量结果通常容易因测试环境负载变化而产生偏差。并且计时器通常得到的是执行时间，对于不同频率的 CPU 结果可能是完全不同的。
+
+
+
+### Google Benchmark
+
+Google Benchmark 是对 C++ 组件进行benchmark 的框架。 对程序中的部分核心代码进行针对性的性能测试，有助于我们学习和理解性能的瓶颈。
 
 在之前我们讨论过 branch 对程序性能的影响，实际上不同的选择率可能会得到不同的性能结果，通过 Google Benchmark 我们可以非常容易的实现不同参数下程序的性能测试。在下面的程序中，我们有两个测试参数，一个是测试数据量的大小，也就是程序中的 size ，另外一个是 branch 的边界，也就是下面的 boundary。下面的程序实现了不同的 size 和 boundary 组合下的性能测试。
 
@@ -127,7 +175,7 @@ Google Benchmark 的 PMU 计数依赖 pfmlib 库，通过系统调用perf_event_
 
 
 
-## perf_event_open
+### perf_event_open
 
 perf 是基于 perf_event_open 的性能分析工具。通过 perf_event_open 系统调用分配 perf_event 之后，会返回一个文件句柄 fd，perf_event 数据结果可以通过 read/prctl/ioctl/mmap/fcntl 系统调用接口来操作。
 
@@ -229,19 +277,19 @@ int ioctl(int fd, unsigned long request, ...);
 
 ioctl 调用常见的取值如下：
 
-`PERF_EVENT_IOC_ENABLE`启用文件描述符参数指定的单个事件或事件组。如果ioctl参数中的PERF_IOC_FLAG_GROUP 置为 1， 组内的所有事件都将开启。
+* `PERF_EVENT_IOC_ENABLE`启用文件描述符参数指定的单个事件或事件组。如果ioctl参数中的PERF_IOC_FLAG_GROUP 置为 1， 组内的所有事件都将开启。
 
-`PERF_EVENT_IOC_DISABLE`禁用文件描述符参数指定的单个计数器或事件组。如果ioctl参数中的PERF_IOC_FLAG_GROUP 置为 1， 组内的所有事件都将禁止。
+* `PERF_EVENT_IOC_DISABLE`禁用文件描述符参数指定的单个计数器或事件组。如果ioctl参数中的PERF_IOC_FLAG_GROUP 置为 1， 组内的所有事件都将禁止。
 
-`PERF_EVENT_IOC_RESET`将文件描述符参数指定的事件计数重置为零。这只会重置计数；无法重置多路复用的time_enabled或time_running值。如果ioctl参数中的PERF_IOC_FLAG_GROUP 置为 1， 组内的所有事件都将重置。
+* `PERF_EVENT_IOC_RESET`将文件描述符参数指定的事件计数重置为零。这只会重置计数；无法重置多路复用的time_enabled或time_running值。如果ioctl参数中的PERF_IOC_FLAG_GROUP 置为 1， 组内的所有事件都将重置。
 
-`PERF_EVENT_IOC_SET_OUTPUT`这告诉内核将事件通知报告给指定的文件描述符，而不是默认的文件描述符。文件描述符必须全部在同一CPU上。
+* `PERF_EVENT_IOC_SET_OUTPUT`这告诉内核将事件通知报告给指定的文件描述符，而不是默认的文件描述符。文件描述符必须全部在同一CPU上。
 
-`PERF_EVENT_IOC_SET_FILTER`（从Linux 2.6.33开始）这将向该事件添加ftrace过滤器。
+* `PERF_EVENT_IOC_SET_FILTER`（从Linux 2.6.33开始）这将向该事件添加ftrace过滤器。
 
-`PERF_EVENT_IOC_ID`  （从Linux 3.12开始）表示给定文件描述符返回对应的 event id。
+* `PERF_EVENT_IOC_ID`  （从Linux 3.12开始）表示给定文件描述符返回对应的 event id。
 
-`PERF_EVENT_IOC_SET_BPF` 表示允许将BPF程序附加到已有的 kprobe tracepoint event。但需要CAP_PERFMON (since Linux 5.8) or CAP_SYS_ADMIN 权限。
+* `PERF_EVENT_IOC_SET_BPF` 表示允许将BPF程序附加到已有的 kprobe tracepoint event。但需要CAP_PERFMON (since Linux 5.8) or CAP_SYS_ADMIN 权限。
 
 
 
