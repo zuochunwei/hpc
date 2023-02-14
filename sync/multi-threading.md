@@ -495,6 +495,157 @@ C语言的条件变量、Posix条件变量的编程接口跟C++的类似，概�
 
 #### lock-free
 
+##### 锁同步的问题
+线程同步分为阻塞型同步和非阻塞型同步。
+
+互斥量、信号、条件变量这些系统提供的机制都属于阻塞型同步，在争用资源的时候，会导致调用线程阻塞。
+
+而非阻塞型同步是在无锁的情况下，通过某种算法和技术手段实现不用阻塞而同步。
+
+锁是阻塞同步机制，阻塞同步机制的缺陷是可能挂起你的程序，如果持有锁的线程崩溃，则锁永远得不到释放，而其他线程则将陷入无限等待，另外，它也可能导致优先级倒转等问题。
+
+所以，我们需要lock-free这类非阻塞的同步机制。
+
+##### 什么是lock-free
+lock-free没有锁同步的问题，所有线程无阻碍的执行原子指令，而不是等待。
+
+比如一个线程读atomic类型变量，一个线程写atomic变量，它们没有任何等待，硬件原子指令确保不会出现数据不一致，写入数据不会出现半完成，读取数据也不会读一半。
+
+那到底什么是lock-free？
+
+有人说lock-free就是不使用mutex / semaphores之类的无锁（lock-Less）编程，这句话严格来说并不对。
+
+我们先看一下wiki对Lock-free的描述:
+> Lock-freedom allows individual threads to starve but guarantees system-wide throughput. An algorithm is lock-free if, when the program threads are run for a sufficiently long time, at least one of the threads makes progress (for some sensible definition of progress). All wait-free algorithms are lock-free.
+
+> In particular, if one thread is suspended, then a lock-free algorithm guarantees that the remaining threads can still make progress. Hence, if two threads can contend for the same mutex lock or spinlock, then the algorithm is not lock-free. (If we suspend one thread that holds the lock, then the second thread will block.)
+
+翻译一下：
+- 第一段：lock-free允许单个线程饥饿但保证系统级吞吐。如果一个程序的线程执行足够长的时间，那么至少一个线程会往前推进，那么这个算法就是lock-free的。​​​
+- 第二段：尤其是，如果一个线程被暂停，lock-free算法保证其他线程依然能够往前推进。
+
+第一段是给lock-free下定义，第二段是对lock-free做解释。
+
+因此，如果2个线程竞争同一个互斥锁或者自旋锁，那它就不是lock-free的。
+
+因为如果我们暂停持有锁的线程，那么另一个线程会被阻塞。
+
+wiki的这段描述很抽象，它不够直观，稍微再解释一下：
+
+lock-free描述的是代码逻辑的属性，不使用锁的代码，大部分具有这种属性。所以，我们经常会混淆这lock-free和无锁这2个概念。
+
+其实，lock-free是对代码（算法）性质的描述，是属性，而无锁是说代码如何实现，是手段。
+
+lock-free的关键描述是：如果一个线程被暂停，那么其他线程应能继续前进，它需要有系统级（system-wide）的吞吐。
+
+我们从反面举例来看，假设我们要借助锁实现一个无锁队列，我们可以直接使用线程不安全的std::queue + std::mutex来做：
+```c++
+template <typename T>
+class Queue {
+public:
+    void push(const T& t) {
+        q_mutex.lock();
+        q.push(t);
+        q_mutex.unlock();
+    }
+private:
+    std::queue<T> q;
+    std::mutex q_mutex;
+};
+```
+如果有线程A/B/C同时执行push方法，最先进入的线程A获得互斥锁。
+
+线程B和C因为获取不到互斥锁而陷入等待。
+
+这个时候，线程A如果因为某个原因（如出现异常，或者等待某个资源）而被永久挂起，那么同样执行push的线程B/C将被永久挂起，系统整体（system-wide）没法推进。这显然不符合lock-free的要求。
+
+因此：所有基于锁（包括spinlock）的并发实现，都不是lock-free的。
+
+因为它们都会遇到同样的问题：即如果永久暂停当前占有锁的线程/进程的执行，将会阻塞其他线程/进程的执行。
+
+而对照lock-free的描述，它允许部分process（理解为执行流）饿死但必须保证整体逻辑的持续前进，基于锁的并发显然是违背lock-free要求的。
+
+#### CAS loop实现lock-free
+Lock-Free同步主要依靠CPU提供的read-modify-write原语，著名的“比较和交换”CAS（Compare And Swap）在X86机器上是通过cmpxchg系列指令实现的原子操作，CAS逻辑上用代码表达是这样的：
+```c++
+bool CAS(T* ptr, T expect_value, T new_value) {
+   if (*ptr != expect_value) {
+      return false;
+   }
+   *ptr = new_value;
+   return true;
+}
+```
+CAS接受3个参数：
+- 内存地址
+- 期望值，通常传第一个参数所指内存地址中的旧值
+- 新值
+逻辑描述：CAS比较内存地址中的值和期望值，如果不相同就返回失败，如果相同就将新值写入内存并返回成功。
+
+当然这个C函数描述的只是CAS的逻辑，这个函数操作不是原子的，因为它可以划分成几个步骤：读取内存值、判断、写入新值，各步骤之间是可以插入其他操作的。
+
+不过前面讲了，原子指令相当于把这些步骤打包，它可能是通过`lock; cmpxchg`实现的，但那是实现细节，程序员更应该注重在逻辑上理解它的行为。
+
+通过CAS实现Lock-free的代码通常借助循环，代码如下：
+```c
+do {
+    T expect_value = *ptr;
+} while (!CAS(ptr, expect_value, new_value));
+```
+1. 创建共享数据的本地副本，expect_value
+2. 根据需要修改本地副本，从ptr指向的共享数据里load后赋值给expect_value
+3. 检查共享的数据跟本地副本是否相等，如果相等，则把新值复制到共享数据
+
+第三步是关键，虽然CAS是原子的，但加载expect_value跟CAS这2个步骤，并不是原子的。
+
+所以，我们需要借助循环，如果ptr内存位置的值没有变（*ptr == expect_value），那就存入新值返回成功；否则说明加载expect_value后，ptr指向的内存位置被其他线程修改了，这时候就返回失败，重新加载expect_value，重试，直到成功为止。
+
+CAS loop支持多线程并发写，这个特点太有用了，因为多线程同步，很多时候都面临多写的问题，我们可以基于cas实现Fetch-and-add(FAA)算法，它看起来像这样：
+```c++
+T faa(T& t) {
+    T temp = t;
+    while (!compare_and_swap(x, temp, temp + 1));
+}
+```
+第一步加载共享数据的值到temp，第二步比较+存入新值，直到成功。
+
+**lock-free栈**
+下面是C++ atomic compare_exchange_weak()实现的一个lock-free堆栈（来自CppReference）
+```c++
+template <typename T>
+struct node {
+    T data;
+    node* next;
+    node(const T& data) : data(data), next(nullptr) {}
+};
+ 
+template <typename T>
+class stack {
+    std::atomic<node<T>*> head;
+public:
+    void push(const T& data) {
+      node<T>* new_node = new node<T>(data);
+      new_node->next = head.load(std::memory_order_relaxed);
+      while (!head.compare_exchange_weak(new_node->next, new_node,
+                                        std::memory_order_release,
+                                        std::memory_order_relaxed));
+    }
+};
+```
+代码解析：
+- 节点（node）保存T类型的数据data，并且持有指向下一个节点的指针
+- `std::atomic<node<T>*>`类型表明atomic里放置的是Node的指针，而非Node本身，因为指针在64位系统上是8字节，等于机器字长，再长没法保证原子性
+- stack类包含head成员，head是一个指向头结点的指针，头结点指针相当于堆顶指针，刚开始没有节点，head为NULL
+- push函数里，先根据data值创建新节点，然后要把它放到堆顶
+- 因为是用链表实现的栈，所以，如果新节点要成为新的堆顶（相当于新节点作为新的头结点插入），那么新节点的next域要指向原来的头结点，并让head指向新节点
+- `new_node->next = head.load`把新节点的next域指向原头结点，然后`head.compare_exchange_weak(new_node->next, new_node)`，让head指向新节点
+- C++ atomic的compare_exchange_weak()跟上述的CAS稍有不同，head.load()不等于new_node->next的时候，它会把head.load()的值重新加载到new_node->next
+- 所以，在加载head值和cas之间，如果其他线程调用push操作，改变了head的值，那没有关系，该线程的本次cas失败，下次重试便可以了
+- 多个线程同时push时，任一线程在任意步骤阻塞/挂起，其他线程都会继续执行并最终返回，无非就是多执行几次while循环
+
+这样的行为逻辑显然符合lock-free的定义，注意用cas+loop实现自旋锁不符合lock-free的定义，注意区分。
+
 #### 内存屏障
 
 #### 伪共享：False Sharing
+##### 什么是伪共享
