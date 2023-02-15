@@ -1,16 +1,19 @@
-# 系统底层基础(zuo)
-- 计算机基础： 
+# 计算机基础 zuo
+- 硬件基础
     - 多CPU、多核
     - 内存总线、PCI总线
-    - 编译器优化、乱序执行
+	- 乱序执行
 	- 流水线（PIPELINE)
-- 内核相关：
-	- 内核态 vs 用户态
-	- 进程调度（context swap）
-	- 中断和异常
 
-# 内存管理和优化(zuo)
-- cache：L1-L2-L3 & cache miss/hit
+# CPU
+
+# 缓存
+	- 分级：L1 / L2 / L3
+	- 命中和命失
+	- 缓存行
+	- 缓存一致性协议
+
+# 内存 zuo
 - 虚拟地址空间：C进程内存布局，MMU、段页式管理，PageFault，SegmentFault
 - 动态内存分配
     - 层次：kernel -> malloc库 -> 内存池层次
@@ -19,6 +22,15 @@
 - 内存池和对象池
 - 定位内存泄漏
 - 其他NUMA、SharedMemory、mmap、内存对齐
+
+# 系统
+- 内核态 vs 用户态
+- 进程调度（context swap）
+- 中断和异常
+- 信号
+
+# 编译器
+- 编译器优化
 
 # 数据结构和算法
 - hash / 一致性hash / linear hashing
@@ -82,12 +94,9 @@
 - 伪共享 
 
 # IO
-
-* blockingIO
-
-* nonblockingIO
-
-* AsyncIO
+- blockingIO
+- nonblockingIO
+- AsyncIO
 
 # 定位系统瓶颈(liu)
 - 查看内存带宽、内存占用、cache命中
@@ -98,9 +107,8 @@
     - 为什么CPU利用率上不去？
 	- 为什么内核态时间占比高？
 
-# 优化系统性能(zuo)
-能不做的就不做，必须做的高效的做
-- 基本现实
+# 性能优化 zuo
+- 基本事实
     - 内存拷贝速度
 	- 访存时延
 	- 锁的耗时
