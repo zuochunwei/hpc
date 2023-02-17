@@ -26,7 +26,7 @@ int calc(int a, int b, char op) {
 ```
 `calc`函数会被编译成汇编指令，一行c代码不一定对应一个汇编指令（有可能是多个），在一个线程里执行`calc`，那么这些机器指令会被依次执行，但被执行的指令序列跟代码顺序可能不一致，因为代码中的条件分支、跳转、调用、返回等语句会影响执行路径。
 
-## 逻辑线程和硬件线程
+## 逻辑线程 vs 硬件线程
 
 ### 逻辑线程
 程序上的线程是一个逻辑上的概念，也叫任务、软线程、逻辑线程，任务这个词是很恰当的。
@@ -101,7 +101,7 @@ C/C++源文件经过编译器处理后，会产生可执行程序文件，比如
 # 为什么需要多线程？
 需要多线程的原因包括：
 - 充分利用多核优势，加快执行速度
-- 多线程影响程序编写方式
+- 多线程能简化程序编写
 
 假设你要编写一个程序，用于统计一批文本文件的单词出现次数，程序的输入是文件名列表，输出一个单词到次数的映射。
 ```c++
@@ -159,22 +159,63 @@ int main(int argc, char* argv[]) {
 待补充
 
 ## 线程编程接口
-TODO
+目前，各主流编程语言都提供多线程编程支持，比如：
+- C语言的11标准提供了并发支持库，主要API包括：
+    - `thrd_create`         创建线程
+    - `thrd_yield`          让出CPU
+    - `thrd_exit`           退出线程
+    - `thrd_current`        获取当前线程标识
+    - `thrd_join`           等待某个线程退出
+- C++也在11标准提供了并发支持库，提供了：
+    - `thread`              线程类
+    - `atomic<T>`           原子变量
+    - `mutex`               互斥锁
+    - `condition_variable`  条件变量
+
+POSIX是开发操作系统互联标准，POSIX.1-2001定义了线程相关的接口`POXIS threads`，这些接口也叫`pthreads`，可以通过`_POSIX_THREADS`宏去测试系统是否支持`pthreads`。
+
+本文主要介绍`pthreads`，相关接口都以`pthread_`作为前缀，要使用这些接口，需要包含头文件：`#include <pthread.h>`
 
 ## 线程标识：pthread_self
-TODO
+```c
+pthread_t pthread_self(void);
+```
+`pthread_self`返回调用线程的标识，这个调用总是成功。
+
+`pthread_t`是一个对用户而言不透明的类型，反正用来区分线程的身份，不能简单假设它是一个整型。
+
+线程ID是进程域内，进程内的多个线程会有唯一ID，而进程ID是操作系统范围内唯一。
+
+```c
+int pthread_equal(pthread_t tid1, pthread_t tid2);
+```
+线程标识判等，相等非0，不等返回0.
 
 ## 线程创建：pthread_create
-**线程入口函数**
+```c
+int pthread_create(pthread_t *restrict tidp, const pthread_attr_t *restrict attr, void *(*start_rtn)(void *), void *restrict arg);
+```
+参数：
+- tidp用于接受新创建的线程标识
+- attr是线程属性
+- start_rtn是**线程入口函数**，这个参数最重要
+- arg是传入线程入口函数的参数
+
+返回值：0表示成功；非0表示失败，返回值是错误码
 
 ## 线程终止：pthread_exit、pthread_cancel
-TODO
+```c
+void pthread_exit(void *rval_ptr);                         // 调用线程主动退出
+int pthread_cancel(pthread_t tid);                         // 让别的线程（tid）退出，默认tid线程会退出，实际上，tid线程可以忽视这个要求
+```
 
 ## 线程交汇：pthread_join、pthread_detach
-TODO
+```c
+int pthread_join(pthread_t thread, void **rval_ptr);       // 等待thread退出，并把退出码存入rval_ptr
+int pthread_detach(pthread_t tid);                         // 把线程至于分离状态
+```
 
 # 线程调度
-TODO
 
 ## 时间分片
 CPU先执行一段时间线程A，然后再执行一段时间线程B，然后再执行一段时间线程A，这就是CPU时间分片，时间分片是对调度策略的一个极度简化，实际上操作系统的调度策略非常精细，要比简单的时间分片复杂的多。如果一秒钟被分成大量的非常短的时间片，比如1000个1毫秒的时间片，一毫秒对人的感官而言太短了，以致于用户觉察不到延迟，仿佛计算机被该用户的任务所独占（实际上并不是），这要归功于计算机系统的进程的抽象。
@@ -199,11 +240,15 @@ char* ctime_r(const time* clock, char* buf);
 比如在程序里可能需要每个线程维护一个链表，而会使用相同的函数来操作这个链表，最简单的方法就是使用同名而不同变量地址的线程相关数据结构。这样的数据结构可以由Posix线程库维护，成为线程私有数据 (Thread-specific Data，或称为 TSD)。
 
 Posix线程私有数据相关接口：
-- int pthread_key_create(pthread_key_t *key, void (*destructor)(void*));
-- int pthread_key_delete(pthread_key_t key);
-- int pthread_setspecific(pthread_key_t key, const void *value);
-- void *pthread_getspecific(pthread_key_t key);
+```c
+int pthread_key_create(pthread_key_t *key, void (*destructor)(void*));
 
+int pthread_key_delete(pthread_key_t key);
+
+int pthread_setspecific(pthread_key_t key, const void *value);
+
+void *pthread_getspecific(pthread_key_t key);
+```
 而C++等语言，提供threadlocal关键字，在语言层面支持。
 
 # 阻塞和非阻塞
