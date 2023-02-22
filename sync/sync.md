@@ -13,7 +13,9 @@
 下面通过几个例子解释为什么需要同步。
 
 ## 两个线程读写同一个数据
-示例1：假设有1个长度为256的字符数组`msg`用于保存消息，函数`write_msg()`和`read_msg()`分别用于`msg`的读和写，如下：
+
+### 示例1
+假设有1个长度为256的字符数组`msg`用于保存消息，函数`write_msg()`和`read_msg()`分别用于`msg`的读和写，如下：
 ```c++
 // example 1
 char msg[256] = "this is old msg";
@@ -39,49 +41,77 @@ void thread2() {
 
 因为`msg`的长度是256字节，完成最长256字节的内存写入需要多个访存周期，在线程1写入新消息期间，线程2可能读到不一致的数据，即可能读到"this is new msg"，而后半段"it's very..."还没来得及写入，它不是完整的新消息，不符合预期。
 
-示例2：比如**用数组实现队列**，该队列通常会有一个元素的数组和2个游标，游标用于记录队首`head`和队尾`tail`的位置。
+### 示例2
+看一个用数组实现FIFO队列的程序：
 ```c++
-// example 2
-template <typename T>
-class Queue {
-    static const int Q_CAPACITY = 100;
+#include <iostream>
+#include <algorithm>
+
+// 用数组实现的环型队列
+class FIFO {
+    // 容量：需要满足是2^N，1024刚好是2^10
+    static const unsigned int CAPACITY = 1024; 
+    
+    unsigned char buffer[CAPACITY];     // 保存数据
+    unsigned int in = 0;                // 写入位置
+    unsigned int out = 0;               // 读取位置
+
+    unsigned int free_space() const {
+        return CAPACITY - in + out;
+    }
+
 public:
-    // 入队
-    bool push(const T& element) {
-        if (element_num == Q_CAPACITY) return false;
-        ++element_num;
-        tail = (++tail) % Q_CAPACITY;
-        elements[tail] = element;
-        return true;
+    // 返回实际写入的数据长度（<=len），返回小于len对应空间不足的情况
+    unsigned int put(unsigned char* src, unsigned int len) {
+        // 计算实际可写入数据长度（<=len）
+        len = std::min(len, free_space());
+
+        // 计算从in到结尾有多少空间
+        unsigned int l = std::min(len, CAPACITY - (in & (CAPACITY - 1)));
+        // 1. 把数据加入buffer，从in位置开始、直到buffer结尾
+        memcpy(buffer + (in & (CAPACITY - 1)), src, l);   
+        // 2. 把数据加入buffer开头（如果上一步还没有放完）
+        memcpy(buffer, src + l, len - l);
+        
+        in += len; // 累加，到达最大值后溢出
+        return len;
     }
 
-    // 出队
-    void pop() {
-        assert(!empty());
-        head = (++head) % Q_CAPACITY;
-        --element_num;
-    }
+    // 返回实际读取的数据长度（<=len），返回小于len对应buffer数据不够
+    unsigned int get(unsigned char *dst, unsigned int len) {
+        //有数据的缓冲区的长度
+        len = std::min(len, in - out);
 
-    // 判空
-    bool empty() const { 
-        return element_num == 0; 
-    }
+        // 计算可以获取的数据长度（<=len）
+        unsigned int l = std::min(len, CAPACITY - (out & (CAPACITY - 1)));
+        // 1. 从out位置开始拷贝数据到dst，最多拷贝到buffer结尾
+        memcpy(dst, buffer + (out & (CAPACITY - 1)), l);
+        // 2. 从buffer开头继续拷贝数据（如果上一步还没拷贝完）
+        memcpy(dst + l, buffer, len - l);
 
-    // 访队首
-    const T& front() const {
-        assert(!empty());
-        return elements[head];
+        out += len; // 累加，到达最大值后溢出
+        return len;
     }
-private:
-    T elements[Q_CAPACITY];
-    int element_num = 0;
-    int head = 0;
-    int tail = -1;
 };
 ```
-队列的`push()`接口，先移动`tail`游标，再把元素添加到队尾，但**移动游标+添加元素**这2个操作，不能在一个指令周期内完成，所以，读线程可能会在写线程移动`tail`游标后穿插进来，而此时元素还没有添加好，同样会有问题。
+环型队列只是逻辑上的概念，因为采用了数组作为数据结构，所以物理存储上并非真正的环形。
+- `put()`用于往队列里放数据，参数`src+len`描述了待放入的数据信息
+- `get()`用于从队列取数据，参数`dst+len`描述了要把数据取到哪里以及取多少字节
+- `capacity`精心选择为2的n次方，有2个好处，更详细的解释可以搜索kfifo
+    - 非常技巧性的利用了整型溢出回绕，方便处理`in`、`out`
+    - 方便计算长度，通过按位与操作`&`而不必除余
+- `in`和`out`是2个游标
+    - `in`用来指向新写入数据的存放位置，写入的时候，只需要简单增加in（得益于上述capacity选择）
+    - `out`用来指示从buffer的什么位置读取数据的，读取的时候，只需要简单增加out（得益于上述capacity选择）
 
-示例3：比如对于二叉搜索树的节点，一个结构体有多个成分：
+为了简化，队列容量被限制为1024字节，不支持扩容。
+
+如果只是一个线程写（`put()`），一个线程读（`get()`），那么上面的FIFO能正常工作吗？
+
+写的时候，先写入数据再移动out游标；读的时候，先拷贝数据，再移动in游标。看着好像没问题，但真的没有问题吗？
+
+### 示例3
+比如对于二叉搜索树的节点，一个结构体有多个成分：
 - 一个指向父节点的指针
 - 一个指向左子树的指针
 - 一个指向右子树的指针
@@ -95,7 +125,8 @@ struct Node {
 这3个成分是有关联的，将节点加入BST，要设置这3个指针域，从BST删除该节点，要修改该节点的父、左孩子节点、右孩子节点的指针域。对多个指针域的修改，不能在一个指令周期完成，如果完成了一个成分的写入，还没来得其他成分写入的时候，被其他线程读到了，则会出错。
 
 ## 两个线程写同一个数据
-示例4：考虑两个线程对同一个整型变量做自增，变量的初始值是0，我们预期2个线程完成自增后变量的值为2。
+### 示例4
+考虑两个线程对同一个整型变量做自增，变量的初始值是0，我们预期2个线程完成自增后变量的值为2。
 ```c++
 // example 4
 int x = 0; // 初始值为0
@@ -703,3 +734,47 @@ false sharing对应的是多线程同时读写一个Cache Line的多个数据，
 所有核心通过RingBus连接成一个环，如果一份内存数据被多个Core加载到Cache，则状态为Shared（S）；一旦一个核心修改了某个Cache Line数据，则状态变成Modify（M），其他核心就能通过RingBus迅速感知到这个修改，从而把自己的Cache Line置为Invalid（I），并且从标记为M的Cache中把数据读过来，完成数据不过内存的核间传播。
 
 因为atomic在Cache Line里的最新值通过RingBus传递给其他核心，不需要频繁的内存Store/Load，所以性能不会那么糟。
+
+# 附录
+该队列通常会有一个元素的数组和2个游标，游标用于记录队首`head`和队尾`tail`的位置。
+```c++
+// example 2
+template <typename T>
+class Queue {
+    static const int Q_CAPACITY = 100;
+public:
+    // 入队
+    bool push(const T& element) {
+        if (element_num == Q_CAPACITY) return false;
+        ++element_num;
+        tail = (++tail) % Q_CAPACITY;
+        elements[tail] = element;
+        return true;
+    }
+
+    // 出队
+    void pop() {
+        assert(!empty());
+        head = (++head) % Q_CAPACITY;
+        --element_num;
+    }
+
+    // 判空
+    bool empty() const { 
+        return element_num == 0; 
+    }
+
+    // 访队首
+    const T& front() const {
+        assert(!empty());
+        return elements[head];
+    }
+private:
+    T elements[Q_CAPACITY];
+    int element_num = 0;
+    int head = 0;
+    int tail = -1;
+};
+```
+队列的`push()`接口，先移动`tail`游标，再把元素添加到队尾，但**移动游标+添加元素**这2个操作，不能在一个指令周期内完成，所以，读线程可能会在写线程移动`tail`游标后穿插进来，而此时元素还没有添加好，同样会有问题。
+
