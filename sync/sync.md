@@ -49,7 +49,7 @@ void thread2() {
 
 // 用数组实现的环型队列
 class FIFO {
-    // 容量：需要满足是2^N，1024刚好是2^10
+    // 容量：需要满足是2^N
     static const unsigned int CAPACITY = 1024; 
     
     unsigned char buffer[CAPACITY];     // 保存数据
@@ -61,54 +61,55 @@ class FIFO {
     }
 
 public:
-    // 返回实际写入的数据长度（<=len），返回小于len对应空间不足的情况
+    // 返回实际写入的数据长度（<=len），返回小于len对应空闲空间不足
     unsigned int put(unsigned char* src, unsigned int len) {
         // 计算实际可写入数据长度（<=len）
         len = std::min(len, free_space());
 
-        // 计算从in到结尾有多少空间
+        // 计算从in到结尾有多少空闲空间
         unsigned int l = std::min(len, CAPACITY - (in & (CAPACITY - 1)));
-        // 1. 把数据加入buffer，从in位置开始、直到buffer结尾
+        // 1. 把数据放入buffer的in位置，最多到buffer结尾
         memcpy(buffer + (in & (CAPACITY - 1)), src, l);   
-        // 2. 把数据加入buffer开头（如果上一步还没有放完）
+        // 2. 把数据放入buffer开头（如果上一步还没有放完）
         memcpy(buffer, src + l, len - l);
         
-        in += len; // 累加，到达最大值后溢出
+        in += len; // 累加，到达uint32_max后溢出回绕
         return len;
     }
 
     // 返回实际读取的数据长度（<=len），返回小于len对应buffer数据不够
     unsigned int get(unsigned char *dst, unsigned int len) {
-        //有数据的缓冲区的长度
+        // 计算实际可读取的数据长度
         len = std::min(len, in - out);
 
-        // 计算可以获取的数据长度（<=len）
         unsigned int l = std::min(len, CAPACITY - (out & (CAPACITY - 1)));
         // 1. 从out位置开始拷贝数据到dst，最多拷贝到buffer结尾
         memcpy(dst, buffer + (out & (CAPACITY - 1)), l);
         // 2. 从buffer开头继续拷贝数据（如果上一步还没拷贝完）
         memcpy(dst + l, buffer, len - l);
 
-        out += len; // 累加，到达最大值后溢出
+        out += len; // 累加，到达uint32_max后溢出回绕
         return len;
     }
 };
 ```
-环型队列只是逻辑上的概念，因为采用了数组作为数据结构，所以物理存储上并非真正的环形。
-- `put()`用于往队列里放数据，参数`src+len`描述了待放入的数据信息
-- `get()`用于从队列取数据，参数`dst+len`描述了要把数据取到哪里以及取多少字节
-- `capacity`精心选择为2的n次方，有2个好处，更详细的解释可以搜索kfifo
-    - 非常技巧性的利用了整型溢出回绕，方便处理`in`、`out`
-    - 方便计算长度，通过按位与操作`&`而不必除余
-- `in`和`out`是2个游标
-    - `in`用来指向新写入数据的存放位置，写入的时候，只需要简单增加in（得益于上述capacity选择）
-    - `out`用来指示从buffer的什么位置读取数据的，读取的时候，只需要简单增加out（得益于上述capacity选择）
+环型队列只是逻辑上的概念，因为采用了数组作为数据结构，所以实际存储上并非环型。
+- `put()`用于往队列里放数据，参数`src+len`描述了待放入的数据信息。
+- `get()`用于从队列取数据，参数`dst+len`描述了要把数据读到哪里、以及读多少字节。
+- `capacity`精心选择为2的n次方，可以得到2个好处：
+    - 非常技巧性的利用了无符号整型溢出回绕，便于处理对`in`和`out`移动。
+    - 便于计算长度，通过按位与操作`&`而不必除余。
+    - 搜`kfifo`获得更详细的解释。
+- `in`和`out`是2个游标。
+    - `in`用来指向新写入数据的存放位置，写入的时候，只需要简单增加in（得益于上述capacity选择）。
+    - `out`用来指示从buffer的什么位置读取数据的，读取的时候，也只需简单增加out（得益于上述capacity选择）。
+- 为了简化，队列容量被限制为1024字节，不支持扩容，这不影响多线程的讨论。
 
-为了简化，队列容量被限制为1024字节，不支持扩容。
+如果只是一个线程写`put()`，另一个线程读`get()`，那么上面的FIFO能正常工作吗？
 
-如果只是一个线程写（`put()`），一个线程读（`get()`），那么上面的FIFO能正常工作吗？
+直觉告诉我们2个线程不加同步的并发读写，会有问题，但到底有什么问题？怎么解释这个问题？
 
-写的时候，先写入数据再移动out游标；读的时候，先拷贝数据，再移动in游标。看着好像没问题，但真的没有问题吗？
+写的时候，先写入数据再移动out游标；读的时候，先拷贝数据，再移动in游标；out游标移动后，消费者才获得`get`到新放入数据的机会。貌似很合理啊！这里留一个谜，我们后面会讨论这个问题。
 
 ### 示例3
 比如对于二叉搜索树的节点，一个结构体有多个成分：
