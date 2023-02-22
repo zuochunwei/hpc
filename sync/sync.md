@@ -42,7 +42,7 @@ void thread2() {
 因为`msg`的长度是256字节，完成最长256字节的内存写入需要多个访存周期，在线程1写入新消息期间，线程2可能读到不一致的数据，即可能读到"this is new msg"，而后半段"it's very..."还没来得及写入，它不是完整的新消息，不符合预期。
 
 ### 示例2
-看一个用数组实现FIFO队列的程序：
+看一个用数组实现FIFO队列的程序，一个线程写`put`，一个线程读`get()`。
 ```c++
 // example 2
 #include <iostream>
@@ -50,16 +50,13 @@ void thread2() {
 
 // 用数组实现的环型队列
 class FIFO {
-    // 容量：需要满足是2^N
-    static const unsigned int CAPACITY = 1024; 
-    
-    unsigned char buffer[CAPACITY];     // 保存数据
-    unsigned int in = 0;                // 写入位置
-    unsigned int out = 0;               // 读取位置
+    static const unsigned int CAPACITY = 1024;  // 容量：需要满足是2^N
 
-    unsigned int free_space() const {
-        return CAPACITY - in + out;
-    }
+    unsigned char buffer[CAPACITY];             // 保存数据
+    unsigned int in = 0;                        // 写入位置
+    unsigned int out = 0;                       // 读取位置
+
+    unsigned int free_space() const { return CAPACITY - in + out; }
 public:
     // 返回实际写入的数据长度（<=len），返回小于len对应空闲空间不足
     unsigned int put(unsigned char* src, unsigned int len) {
@@ -105,9 +102,7 @@ public:
     - `out`用来指示从buffer的什么位置读取数据的，读取的时候，也只需简单增加out（得益于上述capacity选择）。
 - 为了简化，队列容量被限制为1024字节，不支持扩容，这不影响多线程的讨论。
 
-如果只是一个线程写`put()`，另一个线程读`get()`，那么上面的FIFO能正常工作吗？
-
-直觉告诉我们2个线程不加同步的并发读写，会有问题，那到底有什么问题？能否解释清楚？
+直觉告诉我们2个线程不加同步的并发读写，会有问题，但真有问题吗？如果有，到底有什么问题？
 
 写的时候，先写入数据再移动out游标；读的时候，先拷贝数据，再移动in游标；out游标移动后，消费者才获得`get`到新放入数据的机会。貌似很合理啊！我们后面会讨论这个问题。
 
@@ -164,6 +159,8 @@ void thread2() { ++x; }
 template <typename T>
 class Queue {
     static const int Q_CAPACITY = 100;
+    T elements[Q_CAPACITY];
+    int element_num = 0, head = 0, tail = 0;
 public:
     // 入队
     bool push(const T& element) {
@@ -173,40 +170,32 @@ public:
         elements[tail] = element;
         return true;
     }
-
     // 出队
     void pop() {
         assert(!empty());
         head = (++head) % Q_CAPACITY;
         --element_num;
     }
-
     // 判空
     bool empty() const { 
         return element_num == 0; 
     }
-
     // 访队首
     const T& front() const {
         assert(!empty());
         return elements[head];
     }
-private:
-    T elements[Q_CAPACITY];
-    int element_num = 0;
-    int head = 0;
-    int tail = -1;
 };
 ```
 
 代码解释：
-- 队列包括元素的数组`T elements[]`和2个游标，分别用于记录队首`head`和队尾`tail`的位置
+- `T elements[]`保存数据；2个游标，分别用于记录队首`head`和队尾`tail`的位置
 - `push()`接口，先移动`tail`游标，再把元素添加到队尾
-- `pop()`接口，移动`head`游标，弹出队首元素
+- `pop()`接口，移动`head`游标，弹出队首元素（逻辑上）
 - `front()`接口，访问队首
-- `front()和pop()`实现里会做断言，调用`pop()/front()`的客户代码需要确保队列不为空
+- `front()、pop()`先做断言，调用`pop()/front()`的客户代码需要确保队列不为空
 
-假设现在有一个`Queue<int>`实例q，因为不能直接调用`pop`，所以我们封装一个`try_pop()`，代码大概写这样：
+假设现在有一个`Queue<int>`实例q，因为不能直接调用`pop`，我们封装一个`try_pop()`，代码大概写这样：
 ```c++
 Queue<int> q;
 
@@ -217,13 +206,15 @@ void try_pop() {
     }
 }
 ```
-但多个线程并发调用`try_pop`的有问题，因为`判空+出队`这2个操作，不能在一个指令周期内完成。
+如果多个线程调用`try_pop()`，会有问题，为什么？
 
-如果线程1在判空为伪之后，线程2穿插进来，那么判空也伪，这样就有可能2个线程竞争弹出唯一的元素。
+原因：`判空+出队`这2个操作，不能在一个指令周期内完成。如果线程1在判空为伪之后，线程2穿插进来，判空也伪，这样就有可能2个线程竞争弹出唯一的元素。
 
-读变量然后基于变量值做下一步操作，这个事情如果不加保护，就会出错。
+多线程环境下，读变量然后基于变量值做下一步操作，这样的逻辑如果不加保护，就会出错。
 
 ### 示例6
+再看一个简单的，非常简单的对int32_t多线程读写。
+
 ```c++
 int32_t data[32] = {/*设置任意值*/}; 
 
@@ -251,7 +242,7 @@ void thread_read() {
 ```
 2个写线程1个读线程，程序一直跑下去，最后打印出来的数据，会出现除data初始化值外的数据吗？
 
-`int32_t Foo::get() const`的实现有问题吗？如果有问题？到底是什么问题？
+`int32_t Foo::get() const`的实现有问题吗？如果有问题？是什么问题？
 
 # 要保护什么？
 保护数据而非代码
