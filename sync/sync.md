@@ -44,6 +44,7 @@ void thread2() {
 ### 示例2
 看一个用数组实现FIFO队列的程序：
 ```c++
+// example 2
 #include <iostream>
 #include <algorithm>
 
@@ -59,7 +60,6 @@ class FIFO {
     unsigned int free_space() const {
         return CAPACITY - in + out;
     }
-
 public:
     // 返回实际写入的数据长度（<=len），返回小于len对应空闲空间不足
     unsigned int put(unsigned char* src, unsigned int len) {
@@ -123,7 +123,9 @@ struct Node {
     struct Node *left_child, *right_child;
 };
 ```
-这3个成分是有关联的，将节点加入BST，要设置这3个指针域，从BST删除该节点，要修改该节点的父、左孩子节点、右孩子节点的指针域。对多个指针域的修改，不能在一个指令周期完成，如果完成了一个成分的写入，还没来得其他成分写入的时候，被其他线程读到了，则会出错。
+这3个成分是有关联的，将节点加入BST，要设置这3个指针域，从BST删除该节点，要修改该节点的父、左孩子节点、右孩子节点的指针域。
+
+对多个指针域的修改，不能在一个指令周期完成，如果完成了一个成分的写入，还没来得其他成分写入的时候，被其他线程读到了，则可能出错。
 
 ## 两个线程写同一个数据
 ### 示例4
@@ -153,8 +155,103 @@ void thread2() { ++x; }
 
 多个线程对同一变量并发读写，不加同步的话会出现数据不一致，对应到该示例，不一致表现为终值既可能为1也可能为2。
 
-## 使用方式引入的数据不一致问题
-TODO
+## 使用方式引入的问题
+
+### 示例5
+用C++类模板实现一个队列:
+```c++
+// example 5
+template <typename T>
+class Queue {
+    static const int Q_CAPACITY = 100;
+public:
+    // 入队
+    bool push(const T& element) {
+        if (element_num == Q_CAPACITY) return false;
+        ++element_num;
+        tail = (++tail) % Q_CAPACITY;
+        elements[tail] = element;
+        return true;
+    }
+
+    // 出队
+    void pop() {
+        assert(!empty());
+        head = (++head) % Q_CAPACITY;
+        --element_num;
+    }
+
+    // 判空
+    bool empty() const { 
+        return element_num == 0; 
+    }
+
+    // 访队首
+    const T& front() const {
+        assert(!empty());
+        return elements[head];
+    }
+private:
+    T elements[Q_CAPACITY];
+    int element_num = 0;
+    int head = 0;
+    int tail = -1;
+};
+```
+
+代码解释：
+- 队列包括元素的数组`T elements[]`和2个游标，分别用于记录队首`head`和队尾`tail`的位置
+- `push()`接口，先移动`tail`游标，再把元素添加到队尾
+- `pop()`接口，移动`head`游标，弹出队首元素
+- `front()`接口，访问队首
+- `front()和pop()`实现里会做断言，调用`pop()/front()`的客户代码需要确保队列不为空
+
+假设现在有一个`Queue<int>`实例q，因为不能直接调用`pop`，所以我们封装一个`try_pop()`，代码大概写这样：
+```c++
+Queue<int> q;
+
+void try_pop() {
+    if (!q.empty()) {
+        // printf("%d\n", q.front());
+        q.pop();
+    }
+}
+```
+但多个线程并发调用`try_pop`的有问题，因为`判空+出队`这2个操作，不能在一个指令周期内完成。
+
+如果线程1在判空为伪之后，线程2穿插进来，那么判空也伪，这样就有可能2个线程竞争弹出唯一的元素。
+
+读变量然后基于变量值做下一步操作，这个事情如果不加保护，就会出错。
+
+### 示例6
+```c++
+int32_t data[32] = {/*设置任意值*/}; 
+
+struct Foo {
+    int32_t get() const { return x; }
+    void set(int32_t x) { this->x = x; }
+    int32_t x;
+} foo;
+
+void print_int(int32_t value) {
+    // 正确的打印value的值
+}
+
+void thread_write1() {
+    for (;;) { for (auto v : data) { foo.set(v); } }
+}
+
+void thread_write2() {
+    for (;;) { for (auto v : data) { foo.set(v); } }
+}
+
+void thread_read() {
+    for (;;) { print_int(foo.get()); }
+}
+```
+2个写线程1个读线程，程序一直跑下去，最后打印出来的数据，会出现除data初始化值外的数据吗？
+
+`int32_t Foo::get() const`的实现有问题吗？如果有问题？到底是什么问题？
 
 # 要保护什么？
 保护数据而非代码
@@ -737,45 +834,3 @@ false sharing对应的是多线程同时读写一个Cache Line的多个数据，
 因为atomic在Cache Line里的最新值通过RingBus传递给其他核心，不需要频繁的内存Store/Load，所以性能不会那么糟。
 
 # 附录
-该队列通常会有一个元素的数组和2个游标，游标用于记录队首`head`和队尾`tail`的位置。
-```c++
-// example 2
-template <typename T>
-class Queue {
-    static const int Q_CAPACITY = 100;
-public:
-    // 入队
-    bool push(const T& element) {
-        if (element_num == Q_CAPACITY) return false;
-        ++element_num;
-        tail = (++tail) % Q_CAPACITY;
-        elements[tail] = element;
-        return true;
-    }
-
-    // 出队
-    void pop() {
-        assert(!empty());
-        head = (++head) % Q_CAPACITY;
-        --element_num;
-    }
-
-    // 判空
-    bool empty() const { 
-        return element_num == 0; 
-    }
-
-    // 访队首
-    const T& front() const {
-        assert(!empty());
-        return elements[head];
-    }
-private:
-    T elements[Q_CAPACITY];
-    int element_num = 0;
-    int head = 0;
-    int tail = -1;
-};
-```
-队列的`push()`接口，先移动`tail`游标，再把元素添加到队尾，但**移动游标+添加元素**这2个操作，不能在一个指令周期内完成，所以，读线程可能会在写线程移动`tail`游标后穿插进来，而此时元素还没有添加好，同样会有问题。
-
