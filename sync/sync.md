@@ -216,6 +216,7 @@ void try_pop() {
 再看一个简单的，非常简单的对int32_t多线程读写。
 
 ```c++
+// example 6
 int32_t data[32] = {/*设置任意值*/}; 
 
 struct Foo {
