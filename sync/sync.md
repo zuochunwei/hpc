@@ -60,7 +60,7 @@ struct Node {
 对多个指针域的修改，不能在一个指令周期完成，如果完成了一个成分的写入，还没来得修改其他成分，就有可能被其他线程读到了，但此时节点的有些指针域还没有设置好，通过指针域去取数可能会出错。
 
 ## 示例3
-TODO：+配图
+@zy：太简单了就不需要配图了。
 
 考虑两个线程对同一个整型变量做自增，变量的初始值是0，我们预期2个线程完成自增后变量的值为2。
 ```c++
@@ -178,7 +178,7 @@ void thread_read() {
 `int32_t Foo::get() const`的实现有问题吗？如果有问题？是什么问题？
 
 ## 示例6
-TODO：+配图，可以搜kfifo有相关配图
+kfifo.drawio
 
 看一个用数组实现FIFO队列的程序，一个线程写`put()`，一个线程读`get()`。
 ```c++
@@ -384,7 +384,9 @@ Linux系统优化过后的mutex实现，在加锁的时候会先做有限次数�
 TODO：+表格 各种锁的对比（适用场景）
 
 # 条件变量
-TODO：+配图
+
+> proceduer-consumer.drawio
+
 
 条件变量常用于生产者消费者模式，需配合互斥量使用。
 
@@ -489,7 +491,11 @@ lock-free没有锁同步的问题，所有线程无阻碍的执行原子指令�
 
 第一段给lock-free下定义，第二段是对lock-free做解释。
 
-TODO：+配图
+> lock-free.drawio
+
+> Obstruction-Free、Lock-Free和Wait-Free
+
+
 
 如果2个线程竞争同一个互斥锁或者自旋锁，那它就不是lock-free的。因为如果暂停（Hang）持有锁的线程，那么另一个线程会被阻塞。
 
@@ -807,7 +813,7 @@ invalidate queue的存在导致core上观察到的load顺序可能与global memo
 
 由于wmb()和rmb()分别只单独作用于store buffer和invalidate queue，因此这两个memory barrier共同保证了store/load的顺序。
 
-# 伪共享
+# 伪共享（False Sharing）
 ```c++
 const size_t shm_size = 16*1024*1024; //16M
 static char shm[shm_size];
@@ -858,7 +864,7 @@ int main() {
 - 工作线程对shm共计赋值N（10）轮，后面的每一轮会访问Cache里的shm数据，step用于work_thread之间每一轮的同步
 - 工作线程调用完f()后会增加step，等2个工作线程都调用完之后，step的值增加到n * THREAD_NUM后，while()会结束循环，重置shm_offset，重新开始新一轮对shm的赋值
 
-TODO：+配图
+> false-sharing-1.drawio
 
 编译后执行上面的程序，产生如下的结果：
 ```
@@ -887,7 +893,7 @@ void f_fast() {
 ```
 for循环里，shm_offset不再是每次增加8字节（sizeof(long)），而是8*16=128字节，然后在内层的循环里，依次对16个long连续元素赋值，然后下一轮循环又再次增加128字节，直到完成对shm的赋值。
 
-TODO：+配图
+> false-sharing-2.drawio
 编译后重新执行程序，结果显示耗时降低到0.06秒，对比前一种耗时3.4秒，f_fast性能提升。
 ```
 time ./a.out
