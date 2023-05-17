@@ -32,6 +32,7 @@
 - 只在某源文件使用的辅助函数、源文件域变量，置于匿名namespace下
 
 # 命名
+- 好名字的标准：大声读出来，舌头不打结，感到舒服和清晰就好
 - 简明扼要、见名知义
 - 避免否定之否定
 
@@ -43,16 +44,20 @@
 - 终端类建议加final
 
 # 函数
-- 一个函数做一个事情
-- 函数要尽量短小，把一段逻辑封装成一个函数比就地展开逻辑好
+- 一个函数做一个事情，一个函数专注于一个逻辑
+	- 要做函数名涵盖的事情
+	- 不要做超过名字含义的事情
+- 函数要尽量短小，尽量不超过50行
+- 把一段逻辑封装成一个函数，然后调用该函数，比就地铺开逻辑好，性能敏感的关键代码除外
 - 参数类型定义原则：基本数据类型传值，非基本上类型传引用，输入参数尽量const T&，输入输出参数T&
 - 通过返回值报告结果
 - 全局函数要尽量无状态
 - 成员函数积极使用const、override
+- 不要把参数编码进函数名，比如要`get(int id)`，不要`getById(int id)`
 
 # 变量
 - 就近定义原则
-- 为变量精心选取一个有意义的名字，变量名要简单且有意义，循环控制变量可以用i、j、k，符合常规即可
+- 为变量精心挑选一个简短而富有意义的名字，循环控制变量可以用i、j、k，符合常规即可
 - 不要任意扩大变量的作用域
 
 # 宏
@@ -75,6 +80,65 @@
 - 参数传递时，`T*`代表单个对象，`T* + num`代表数组
 - 区分`unique_ptr shared_ptr weak_ptr`，恰当的使用它们
 
-# 格式
-代码格式主要遵从：Google C++ Style Guide
+# 代码格式和风格
+主要遵从：Google C++ Style Guide
+
+```c++
+class MyClass {
+ public:
+  int CountFooErrors(const std::vector<Foo>& foos) {
+    int n = 0;  // Clear meaning given limited scope and context
+    for (const auto& foo : foos) {
+      ...
+      ++n;
+    }
+    return n;
+  }
+
+  void DoSomethingImportant() {
+    std::string fqdn = ...;  // Well-known abbreviation for Fully Qualified Domain Name
+  }
+
+ private:
+  const int kMaxAllowedConnections = ...;  // Clear meaning within context
+
+	std::string table_name_;  // OK - underscore at end.
+  static Pool<TableInfo>* pool_;  // OK.
+};
+
+// if / else if
+if (typeid(*data) == typeid(D1)) {
+  ...
+} else if (typeid(*data) == typeid(D2)) {
+  ...
+} else if (typeid(*data) == typeid(D3)) {
+	...
+}
+
+// Struct Data Members
+struct UrlTableProperties {
+  std::string name;
+  int num_entries;
+  static Pool<UrlTableProperties>* pool;
+};
+
+// Constant Names
+const int kDaysInAWeek = 7;
+const int kAndroid8_0_0 = 24;  // Android 8.0.0
+
+// Enumerator Names
+enum class UrlTableError {
+  kOk = 0,
+  kOutOfMemory,
+  kMalformedInput,
+};
+
+// Macro Names
+#define MYPROJECT_ROUND(x) ...
+
+```
+
+# 参考
+- [CppCoreGuidelines](https://github.com/fluz/CppCoreGuidelines)
+- [Google C++ Style Guide](https://google.github.io/styleguide/cppguide.html)
 
