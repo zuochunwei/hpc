@@ -146,6 +146,14 @@ C++是易学难精的专家型语言，它拥有丰富的语法特征和库，�
 - shared_ptr代表共享语义
 - 使用make_unique去创建unique_ptr对象
 - 使用make_shared去创建shared_ptr对象
+- 使用weak_ptr去打破shared_ptr的循环引用
+- 只有为了去表达清晰的生命周期语义，才应该将智能指针作为参数传递
+- 用unique_ptr<widget>做参数，去表达函数取得widget的所有权
+- 用unique_ptr<widget>&做参数，表示reseat widget
+- 用shared_ptr<widget>做参数，表达共享所有权
+- 用const shared_ptr<widget>&做参数，表示它可能保留对象的引用计数
+- 不要传递从智能指针别名里获取的对象的指针或引用
+
 
 # 内存管理
 - 优化内存管理要放到功能需求后
