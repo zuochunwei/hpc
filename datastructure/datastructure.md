@@ -2,7 +2,7 @@
 
 ## hash
 
-哈希算法广泛应用于很多场景，例如安全加密和数据结构中哈希表的查找，布隆过滤器和负载均衡（一致性哈希）等等。
+hash函数又称为散列函数。哈希算法广泛应用于很多场景，例如加密，索引，认证等。
 
 常见的加密哈希算法比如MD5,SHA1,SHA-256, CHACHA20等
 
@@ -20,7 +20,15 @@ CityHash是由google在2011年 发布的, 其性能好于 MurmurHash。但后来
 
 xxhash 由 Yann Collet 发表，http://cyan4973.github.io/xxHash/ 这是它的官网，据说性能很好，似乎被很多开源项目使用，Bloom Filter 的首选。
 
+
+
+hash 函数计算时，不可避免的会产生 hash 冲突，hash 冲突指的是两个不同的数据落入了同一个 hash 桶内。解决 hash 冲突常见的有三种方法：开放定址法，链地址法，再哈希法。
+
+开放定址法分为线性探测法，平方探测法，伪随机探测法。
+
 ### consistent hashing
+
+一致性哈希算法（Consistent Hashing algorithm）是一种用来解决分布式系统中存储节点管理的数据一致性算法。它可以让分布式系统中的节点有效地添加、删除和维护，而无需重新映射所有数据。一致性哈希算法通过将数据分割成一系列的桶，将数据映射到存储节点上，以此来确保在节点添加或删除时只需要对附近的桶进行重新映射，而不需要对所有的桶进行重新映射。
 
 在分布式系统中，我们可以通过hash分布的方式将数据均匀分布在所有的分布式节点上。但当分布式系统的拓扑发生改变时，也就是增删节点时，往往需要进行数据的重新分布。一致性哈希就是为了解决这一问题而诞生的。
 
@@ -44,7 +52,7 @@ int32_t JumpConsistentHash(uint64_t key, int32_t num_buckets) {
 
 ### linear hashing
 
-Hashtable是最常使用的数据结构之一。Linear Hashing是一种哈希表算法。它通常用于在数据库和文件系统中实现哈希索引。它用于动态调整hashtable。
+线性哈希是Witold Litwin于1980年首次描述的动态哈希算法。它是一种开放寻址方法，用于数据库系统为新数据记录分配空间。它是可扩展哈希算法的变体，该算法使用一种称为桶分割的技术，在需要更多空间时增加哈希表的大小。线性哈希通过从哈希表中添加或删除桶来支持数据库系统的动态增长和重新组织。
 
 
 
@@ -252,4 +260,3 @@ Reference:
    https://blog.csdn.net/yizishou/article/details/78342499?spm=1001.2101.3001.6661.1&utm_medium=distribute.pc_relevant_t0.none-task-blog-2%7Edefault%7ECTRLIST%7ERate-1-78342499-blog-119736050.pc_relevant_multi_platform_featuressortv2dupreplace&depth_1-utm_source=distribute.pc_relevant_t0.none-task-blog-2%7Edefault%7ECTRLIST%7ERate-1-78342499-blog-119736050.pc_relevant_multi_platform_featuressortv2dupreplace&utm_relevant_index=1
 
    https://www.jianshu.com/p/818ac4e90daf
-
