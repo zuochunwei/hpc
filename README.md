@@ -1,4 +1,9 @@
+# High Performance Computing(HPC)
+
+
+
 # 计算机基础 zuo
+
 - 硬件基础
     - 多CPU、多核
     - 内存总线、PCI总线
@@ -7,13 +12,20 @@
 
 # CPU
 
-# 缓存
+* 现代 CPU 架构
+* <span id="pipeline">CPU pipeline</span>
+* 分支预测
+* 乱序执行
+
+# 内存 zuo
+
+* CPU Cache
+
 	- 分级：L1 / L2 / L3
 	- 命中和命失
 	- 缓存行
 	- 缓存一致性协议
 
-# 内存 zuo
 - 虚拟地址空间：C进程内存布局，MMU、段页式管理，PageFault，SegmentFault
 - 动态内存分配
     - 层次：kernel -> malloc库 -> 内存池层次
